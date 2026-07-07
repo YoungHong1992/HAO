@@ -21,6 +21,15 @@ printf '== common and crypto helpers ==\n'
 printf '== credentials helpers ==\n'
 "$ROOT_DIR/tests/test-credentials.sh"
 
+printf '== cli profile ==\n'
+"$ROOT_DIR/tests/test-cli-profile.sh"
+
+printf '== generic skills ==\n'
+"$ROOT_DIR/tests/test-generic-skills.sh"
+
+printf '== cli-only root ==\n'
+"$ROOT_DIR/tests/test-cli-only-root.sh"
+
 printf '== hidden modules ==\n'
 "$ROOT_DIR/tests/test-hidden-modules.sh"
 

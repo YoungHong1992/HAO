@@ -30,7 +30,9 @@ Already installed dependencies are detected and skipped unless selected directly
 - `HAO_CLIPROXY_DOMAIN`: CliproxyAPI endpoint
 - `HAO_NEWAPI_DOMAIN`: New-API endpoint
 - `HAO_CLIPROXY_MODE`: `docker` or `bare`
+- `HAO_CLIPROXY_IMAGE`: CliproxyAPI Docker image tag or digest
 - `HAO_DB_TYPE`: `postgresql` or `mysql`
+- `HAO_NEWAPI_IMAGE`: New-API Docker image tag or digest
 - `HAO_CONFIRM_APPLY`: set to `yes` only after user confirmation
 
 Only `HAO_*` variables are supported.

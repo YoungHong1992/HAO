@@ -720,7 +720,14 @@ if $COMPOSE_CMD down && $COMPOSE_CMD up -d; then
     log_success "容器重建成功"
 
     log_info "等待服务启动..."
-    wait_for_healthy "$COMPOSE_CMD" "$SERVICE_DIR" 60 5 "new-api" || true
+    if ! wait_for_healthy "$COMPOSE_CMD" "$SERVICE_DIR" 60 5 "new-api"; then
+        log_error "服务健康检查失败，正在回滚..."
+        cp "$BACKUP_FILE" "$COMPOSE_FILE"
+        $COMPOSE_CMD down 2>/dev/null || true
+        $COMPOSE_CMD up -d || true
+        log_warning "已回滚到旧版本"
+        exit 1
+    fi
 
     if $COMPOSE_CMD ps 2>/dev/null | grep -q "Up"; then
         log_success "服务运行正常"

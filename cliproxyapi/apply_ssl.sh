@@ -875,6 +875,7 @@ if nginx -t >/dev/null 2>&1; then
 else
     log_error "Nginx 配置测试失败，请检查配置"
     nginx -t 2>&1 || true
+    exit 1
 fi
 
 # ==================== 输出结果 ====================

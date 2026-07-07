@@ -96,14 +96,11 @@ Docker 已安装？
   └─ 否 → 开始自动安装
            ├─ 1. 修复 apt 源（Debian/Ubuntu）
            ├─ 2. 安装依赖包
-           ├─ 3. 尝试官方脚本 (get.docker.com)
-           │     ├─ 成功 → 启动服务 → 完成
-           │     └─ 失败 → 进入备用方案
-           ├─ 4. 按发行版手动安装
+           ├─ 3. 按发行版配置 Docker 官方软件仓库
            │     ├─ debian/ubuntu → apt + Docker 官方仓库
            │     ├─ centos/rhel/rocky → yum + Docker 仓库
            │     └─ 其他 → 报错退出
-           └─ 5. 启动服务 + 验证安装
+           └─ 4. 启动服务 + 验证安装
 ```
 
 ---
@@ -169,11 +166,11 @@ docker system df
 
 ## 常见问题
 
-### 1. 官方脚本下载失败
+### 1. Docker 官方仓库连接失败
 
-**症状**: `curl: (7) Failed to connect to get.docker.com`
+**症状**: 连接 `download.docker.com` 超时或 apt/yum 仓库更新失败
 
-**解决方案**: 脚本会自动切换到手动安装方式，无需干预。如仍失败，检查网络连通性。
+**解决方案**: 检查服务器网络、DNS、防火墙或软件源代理配置后重试。
 
 ### 2. apt 源报错
 

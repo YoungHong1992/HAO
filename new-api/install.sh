@@ -75,7 +75,7 @@ DOCKER_ROOT="/opt/docker-services"
 SERVICE_DIR="$DOCKER_ROOT/new-api"
 DATA_DIR="$SERVICE_DIR/data"
 LOGS_DIR="$SERVICE_DIR/logs"
-DOCKER_IMAGE="calciumion/new-api:latest"
+DOCKER_IMAGE="${HAO_NEWAPI_IMAGE:-calciumion/new-api:latest}"
 DOCKER_NETWORK="ai-services"
 
 # ==================== 环境检查 ====================
@@ -438,13 +438,19 @@ fi
 
 # 使用健康检查轮询替代固定 sleep
 log_info "等待服务健康检查通过（最多 90 秒）..."
-wait_for_healthy "$COMPOSE_CMD" "$SERVICE_DIR" 90 5 "new-api" || true
+if ! wait_for_healthy "$COMPOSE_CMD" "$SERVICE_DIR" 90 5 "new-api"; then
+    log_error "New-API 健康检查未通过。"
+    $COMPOSE_CMD ps 2>/dev/null || true
+    $COMPOSE_CMD logs --tail=80 new-api 2>/dev/null || true
+    exit 1
+fi
 
 if $COMPOSE_CMD ps 2>/dev/null | grep -q "Up"; then
     log_success "服务运行正常"
 else
-    log_warning "服务可能未正常启动，请检查日志"
+    log_error "服务未正常运行，请检查日志"
     $COMPOSE_CMD ps 2>/dev/null || true
+    exit 1
 fi
 
 # ==================== SSL 证书 ====================
@@ -473,12 +479,15 @@ fi
 CONF_FILE="$CONF_D/${DOMAIN}.conf"
 
 EXISTING_DOMAIN_CONF="$(find_nginx_conf_by_server_name "$DOMAIN" "$CONF_D" || true)"
-if [ -n "$EXISTING_DOMAIN_CONF" ] && ! grep -q "NEW-API-START" "$EXISTING_DOMAIN_CONF"; then
-    log_error "Nginx server_name 已被其他配置占用: $EXISTING_DOMAIN_CONF"
-    log_error "请为 New-API 使用独立域名，避免覆盖其他服务。"
-    exit 1
+if [ -n "$EXISTING_DOMAIN_CONF" ]; then
+    if ! grep -q "NEW-API-START" "$EXISTING_DOMAIN_CONF"; then
+        log_error "Nginx server_name 已被其他配置占用: $EXISTING_DOMAIN_CONF"
+        log_error "请为 New-API 使用独立域名，避免覆盖其他服务。"
+        exit 1
+    fi
+    CONF_FILE="$EXISTING_DOMAIN_CONF"
 fi
-[ -f "$CONF_FILE" ] && backup_file "$CONF_FILE"
+CONF_BACKUP="$(backup_file_for_write "$CONF_FILE")"
 
 # 公共 location 块
 read -r -d '' NGINX_LOCATION <<'NGX_LOC_EOF' || true
@@ -608,6 +617,9 @@ if nginx -t >/dev/null 2>&1; then
 else
     log_error "Nginx 配置测试失败"
     nginx -t 2>&1 || true
+    restore_file_after_failed_write "$CONF_FILE" "$CONF_BACKUP"
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+    exit 1
 fi
 
 # ==================== 生成凭据信息文件 ====================
