@@ -1,0 +1,78 @@
+# New-API Docker Compose Configuration — 参考模板
+#
+# ⚠️  警告：此文件为参考模板，请勿直接用于生产环境！
+#     请使用 install.sh 脚本进行部署，
+#     脚本会自动生成安全的随机密码。
+#
+# 如需手动部署：
+#   1. 替换所有 CHANGE_ME 为安全随机密码
+#      (生成命令: openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
+#   2. 取消注释需要的数据库类型
+#   3. docker compose up -d
+#
+# 使用 MySQL 替代 PostgreSQL:
+#   1. 注释 postgres 服务和对应 SQL_DSN
+#   2. 取消注释 mysql 服务和对应 SQL_DSN
+#   3. 取消注释 mysql 在 depends_on 和 volumes 中
+
+version: '3.4'
+
+services:
+  new-api:
+    image: calciumion/new-api:latest
+    container_name: new-api
+    restart: always
+    command: --log-dir /app/logs
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    environment:
+      - SQL_DSN=postgresql://root:CHANGE_ME@postgres:5432/new-api
+#      - SQL_DSN=root:CHANGE_ME@tcp(mysql:3306)/new-api
+      - REDIS_CONN_STRING=redis://redis
+      - SESSION_SECRET=CHANGE_ME_RANDOM_STRING
+      - TZ=Asia/Shanghai
+      - ERROR_LOG_ENABLED=true
+      - BATCH_UPDATE_ENABLED=true
+#      - STREAMING_TIMEOUT=300
+    depends_on:
+      - redis
+      - postgres
+#      - mysql
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/status >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    restart: always
+
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: CHANGE_ME
+      POSTGRES_DB: new-api
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+#  mysql:
+#    image: mysql:8.2
+#    container_name: mysql
+#    restart: always
+#    environment:
+#      MYSQL_ROOT_PASSWORD: CHANGE_ME
+#      MYSQL_DATABASE: new-api
+#    volumes:
+#      - mysql_data:/var/lib/mysql
+
+volumes:
+  pg_data:
+#  mysql_data:

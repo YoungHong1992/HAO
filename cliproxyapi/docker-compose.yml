@@ -1,0 +1,29 @@
+# CliproxyAPI Docker Compose Configuration — 参考模板
+#
+# ⚠️  警告：此文件为参考模板，请勿直接用于生产环境！
+#     请使用 install.sh 脚本进行部署，脚本会自动生成安全的 config.yaml。
+#
+# 如需手动部署：
+#   1. 准备 config.yaml，设置 remote-management.secret-key 和 api-keys
+#   2. mkdir -p auths logs
+#   3. docker compose up -d
+
+services:
+  cliproxyapi:
+    image: eceasy/cli-proxy-api:latest
+    container_name: cliproxyapi
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8317:8317"
+      # OAuth / Web UI callback helper ports, bound to localhost only.
+      - "127.0.0.1:8085:8085"
+      - "127.0.0.1:1455:1455"
+      - "127.0.0.1:54545:54545"
+      - "127.0.0.1:51121:51121"
+      - "127.0.0.1:11451:11451"
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./config.yaml:/CLIProxyAPI/config.yaml
+      - ./auths:/root/.cli-proxy-api
+      - ./logs:/CLIProxyAPI/logs

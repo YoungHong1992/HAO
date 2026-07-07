@@ -1,0 +1,26 @@
+name: Integration
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'maintenance/**'
+      - 'tests/test-maintenance-idempotency.sh'
+      - '.github/workflows/integration.yml'
+
+jobs:
+  maintenance-idempotency:
+    name: Maintenance real install idempotency
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run maintenance installer twice
+        run: sudo ./tests/test-maintenance-idempotency.sh
+
+      - name: Show maintenance marker
+        if: always()
+        run: |
+          sudo test -f /var/lib/hao/maintenance.installed && sudo cat /var/lib/hao/maintenance.installed || true

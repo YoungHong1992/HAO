@@ -1,0 +1,4 @@
+interface:
+  display_name: "HAO Deploy"
+  short_description: "Deploy AI server stacks with HAO"
+  default_prompt: "Use $hao-deploy to plan, preflight, and deploy a HAO service on this VPS."

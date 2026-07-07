@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  shell:
+    name: Shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Bash syntax check
+        run: |
+          find . -path ./.git -prune -o -name '*.sh' -print0 \
+            | xargs -0 -n1 bash -n
+
+      - name: ShellCheck
+        run: |
+          find . -path ./.git -prune -o -name '*.sh' -print0 \
+            | xargs -0 shellcheck -x -S warning
+
+      - name: Smoke tests
+        run: |
+          ./install.sh --version
+          ./install.sh -h >/dev/null
+
+      - name: Repository tests
+        run: |
+          ./tests/test-common-crypto.sh
+          ./tests/test-credentials.sh
+          ./tests/test-hidden-modules.sh
