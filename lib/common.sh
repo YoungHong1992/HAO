@@ -316,6 +316,32 @@ backup_file() {
     fi
 }
 
+backup_file_for_write() {
+    local file="$1"
+    local backup=""
+
+    if [ -f "$file" ]; then
+        backup="${file}.bak.$(date +%Y%m%d_%H%M%S)"
+        cp -a "$file" "$backup"
+        log_info "已备份: $backup"
+    fi
+
+    printf '%s' "$backup"
+}
+
+restore_file_after_failed_write() {
+    local file="$1"
+    local backup="${2:-}"
+
+    if [ -n "$backup" ] && [ -f "$backup" ]; then
+        cp -a "$backup" "$file"
+        log_warning "已恢复备份: $file"
+    else
+        rm -f "$file"
+        log_warning "已移除失败生成的配置: $file"
+    fi
+}
+
 find_nginx_conf_by_server_name() {
     local domain="$1"
     local conf_dir="${2:-/etc/nginx/conf.d}"

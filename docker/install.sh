@@ -9,7 +9,7 @@
 # 功能说明：
 #   1. 检测 Docker 是否已安装，已安装则确保服务运行
 #   2. 自动修复 Debian/Ubuntu apt 源问题
-#   3. 优先使用官方安装脚本，失败后按发行版手动安装
+#   3. 按发行版配置 Docker 官方软件仓库并安装
 #   4. 安装 Docker Compose 插件
 #   5. 启动并设置 Docker 开机自启
 #
@@ -726,25 +726,8 @@ ensure_docker() {
     echo -e "${DIM}安装依赖包...${NC}"
     apt-get install -y -qq ca-certificates curl gnupg lsb-release >/dev/null 2>&1
 
-    # 方案一：使用官方安装脚本
-    echo -e "${DIM}下载并运行 Docker 官方安装脚本...${NC}"
-
-    if curl -fsSL --connect-timeout 30 https://get.docker.com -o /tmp/get-docker.sh 2>/dev/null; then
-        if sh /tmp/get-docker.sh 2>&1; then
-            rm -f /tmp/get-docker.sh
-            systemctl start docker
-            systemctl enable docker
-            log_success "Docker 安装成功"
-            ensure_docker_compose
-            return $?
-        else
-            log_warning "官方脚本安装失败，尝试手动安装..."
-            rm -f /tmp/get-docker.sh
-        fi
-    fi
-
-    # 方案二：手动安装
-    echo -e "${DIM}使用备用安装方式...${NC}"
+    # 默认使用显式仓库安装，避免执行远程安装脚本。
+    echo -e "${DIM}使用 Docker 官方软件仓库安装...${NC}"
 
     if [ -f /etc/os-release ]; then
         . /etc/os-release

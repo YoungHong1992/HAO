@@ -3,7 +3,7 @@
 # shellcheck disable=SC2034
 ################################################################################
 #
-# HAO（HongAgentOps）— AI Agent 运维与模型部署工具
+# HAO（HongAgentOps）— AI-native deterministic deployment executor
 # 版本: v4.0.0
 #
 # 功能说明：
@@ -17,7 +17,7 @@
 #   ./install.sh -h                # 显示帮助
 #   ./install.sh --version         # 显示版本
 #
-# 远程安装：
+# 远程自举：
 #   curl -fsSL https://.../install.sh | bash
 #
 # 可用组件：
@@ -116,6 +116,7 @@ bootstrap_full_repo() {
         || [ ! -f "$root_dir/cliproxyapi/install.sh" ] \
         || [ ! -f "$root_dir/new-api/install.sh" ] \
         || [ ! -f "$root_dir/pi-coding-agent/install.sh" ] \
+        || [ ! -f "$root_dir/claude-code/install.sh" ] \
         || [ ! -f "$root_dir/lib/common.sh" ] \
         || [ ! -f "$root_dir/lib/crypto.sh" ] \
         || [ ! -f "$root_dir/lib/credentials.sh" ]; then
@@ -146,6 +147,7 @@ if [ ! -f "$INSTALL_DIR/maintenance/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/cliproxyapi/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/new-api/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/pi-coding-agent/install.sh" ] \
+    || [ ! -f "$INSTALL_DIR/claude-code/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/lib/common.sh" ] \
     || [ ! -f "$INSTALL_DIR/lib/crypto.sh" ] \
     || [ ! -f "$INSTALL_DIR/lib/credentials.sh" ]; then
@@ -570,30 +572,6 @@ is_noninteractive() {
     [ "${HAO_UNATTENDED:-}" = "1" ]
 }
 
-confirm() {
-    local prompt="$1"
-    local default="${2:-n}"
-
-    if [ "$default" = "y" ]; then
-        printf "%s [Y/n]: " "$prompt"
-    else
-        printf "%s [y/N]: " "$prompt"
-    fi
-
-    read -r response
-    response=${response:-$default}
-
-    case "$response" in
-        [yY][eE][sS]|[yY]) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-wait_key() {
-    echo ""
-    read -r -p "按 Enter 键继续..." _
-}
-
 validate_domain() {
     local domain="$1"
     if [ -z "$domain" ]; then
@@ -654,80 +632,6 @@ escape_double_quoted() {
     value=${value//\"/\\\"}
     value=${value//$'\t'/\\t}
     printf '%s' "$value"
-}
-
-select_access_mode() {
-    echo "" >&2
-    echo -e "${CYAN}>>> 请选择访问方式${NC}" >&2
-    echo "" >&2
-    echo "  1) 使用域名（推荐）- 自动申请 Let's Encrypt 证书" >&2
-    echo "  2) 使用 IP 地址   - 自签名证书，无需域名" >&2
-    echo "  3) 仅使用 HTTP    - 无 SSL 证书，仅限内网/开发环境" >&2
-    echo "" >&2
-
-    local mode
-    while true; do
-        read -r -p "请选择 [1/2/3]: " mode
-        case "$mode" in
-            1) echo "domain"; return 0 ;;
-            2) echo "ip"; return 0 ;;
-            3) echo "http"; return 0 ;;
-            *) log_warning "无效选择，请重新输入" >&2 ;;
-        esac
-    done
-}
-
-get_domain_for_mode() {
-    local mode="$1"
-
-    case "$mode" in
-        domain)
-            local domain
-            read -r -p "请输入域名 (例如 api.example.com): " domain
-            validate_domain "$domain" || exit 1
-            echo "$domain"
-            ;;
-        ip|http)
-            local server_ip ip_confirm domain
-            server_ip=$(detect_server_ip)
-            if [ -z "$server_ip" ] || ! validate_ip "$server_ip"; then
-                log_error "无法获取有效服务器 IP，请手动输入。" >&2
-                while true; do
-                    read -r -p "请输入服务器 IP 地址: " server_ip
-                    validate_ip "$server_ip" && break
-                done
-            fi
-            echo "" >&2
-            echo -e "检测到服务器 IP: ${GREEN}$server_ip${NC}" >&2
-
-            if [ "$mode" = "http" ]; then
-                echo -e "${YELLOW}⚠️  HTTP 模式警告：${NC}" >&2
-                echo -e "${YELLOW}   - 数据传输不加密，API Key 可能泄露${NC}" >&2
-                echo -e "${YELLOW}   - 仅建议在内网或开发环境使用${NC}" >&2
-            fi
-
-            echo "" >&2
-            read -r -p "确认使用此 IP？(y/n，或直接输入其他 IP): " ip_confirm
-
-            case "$ip_confirm" in
-                [Yy]|"") echo "$server_ip" ;;
-                [Nn])
-                    while true; do
-                        read -r -p "请输入 IP 地址: " domain
-                        validate_ip "$domain" && break
-                    done
-                    echo "$domain"
-                    ;;
-                *)
-                    if validate_ip "$ip_confirm"; then
-                        echo "$ip_confirm"
-                    else
-                        exit 1
-                    fi
-                    ;;
-            esac
-            ;;
-    esac
 }
 
 # ==================== 帮助信息 ====================
@@ -793,6 +697,7 @@ readonly SVC_DOCKER="docker"
 readonly SVC_CLIPROXY="cliproxyapi"
 readonly SVC_NEWAPI="newapi"
 readonly SVC_PI="pi"
+readonly SVC_CLAUDECODE="claude-code"
 
 # Service definitions (order = dependency order)
 declare -A SVC_NAME SVC_DESC SVC_HINT SVC_SCRIPT SVC_DEPENDS
@@ -832,10 +737,16 @@ SVC_HINT[$SVC_PI]="500MB 磁盘"
 SVC_SCRIPT[$SVC_PI]="$INSTALL_DIR/pi-coding-agent/install.sh"
 SVC_DEPENDS[$SVC_PI]=""
 
+SVC_NAME[$SVC_CLAUDECODE]="Claude Code"
+SVC_DESC[$SVC_CLAUDECODE]="Anthropic 官方终端 AI 编程助手，可选配置自定义网关/模型"
+SVC_HINT[$SVC_CLAUDECODE]="500MB 磁盘"
+SVC_SCRIPT[$SVC_CLAUDECODE]="$INSTALL_DIR/claude-code/install.sh"
+SVC_DEPENDS[$SVC_CLAUDECODE]=""
+
 # Ordered list for display
 readonly ALL_SERVICES=(
     "$SVC_MAINTENANCE" "$SVC_NGINX" "$SVC_DOCKER"
-    "$SVC_CLIPROXY" "$SVC_NEWAPI" "$SVC_PI"
+    "$SVC_CLIPROXY" "$SVC_NEWAPI" "$SVC_PI" "$SVC_CLAUDECODE"
 )
 
 # Runtime state
@@ -854,6 +765,8 @@ DOMAIN=""                     # single Web service IP/domain fallback
 ADMIN_PASSWORD=""              # cliproxyapi
 CLIPROXY_DEPLOY_MODE="docker"  # docker | bare
 DB_TYPE="postgresql"           # newapi
+CLIPROXY_IMAGE=""
+NEWAPI_IMAGE=""
 
 # ==================== 单轮状态重置 ====================
 
@@ -871,22 +784,11 @@ reset_iteration_state() {
     ADMIN_PASSWORD=""
     CLIPROXY_DEPLOY_MODE="docker"
     DB_TYPE="postgresql"
+    CLIPROXY_IMAGE=""
+    NEWAPI_IMAGE=""
 
     # CliproxyAPI 默认 Docker Compose；裸机选择只在当前轮生效。
     SVC_DEPENDS[$SVC_CLIPROXY]="$SVC_NGINX $SVC_DOCKER"
-}
-
-prompt_return_home() {
-    echo ""
-    echo -e "${YELLOW}按 Enter 返回首页继续安装其他服务 | 输入 q 退出${NC}"
-    echo ""
-
-    local next_action
-    read -r -p "请选择 [Enter/q]: " next_action
-    case "$next_action" in
-        [Qq]) return 1 ;;
-        *)    return 0 ;;
-    esac
 }
 
 # ==================== 服务检测 ====================
@@ -936,11 +838,16 @@ detect_installed_services() {
                     ALREADY_INSTALLED[$svc]=true
                 fi
                 ;;
+            "$SVC_CLAUDECODE")
+                if command -v claude &>/dev/null; then
+                    ALREADY_INSTALLED[$svc]=true
+                fi
+                ;;
         esac
     done
 }
 
-# ==================== 显示服务面板 ====================
+# ==================== 服务显示工具 ====================
 
 service_short_name() {
     case "$1" in
@@ -950,264 +857,9 @@ service_short_name() {
         "$SVC_CLIPROXY") echo "CliproxyAPI" ;;
         "$SVC_NEWAPI")   echo "New-API" ;;
         "$SVC_PI")       echo "Pi" ;;
+        "$SVC_CLAUDECODE") echo "Claude Code" ;;
         *)                echo "$1" ;;
     esac
-}
-
-service_resource_hint() {
-    case "$1" in
-        "$SVC_MAINTENANCE") echo "Baseline" ;;
-        "$SVC_NGINX")    echo "512MB RAM" ;;
-        "$SVC_DOCKER")   echo "No extra" ;;
-        "$SVC_CLIPROXY") echo "256MB RAM" ;;
-        "$SVC_NEWAPI")   echo "1GB+ RAM" ;;
-        "$SVC_PI")       echo "500MB disk" ;;
-        *)                echo "-" ;;
-    esac
-}
-
-repeat_char() {
-    local char="$1"
-    local count="$2"
-    local i
-    for ((i = 0; i < count; i++)); do
-        printf '%s' "$char"
-    done
-}
-
-text_display_width() {
-    local text="$1"
-    local bytes chars
-    bytes=$(printf '%s' "$text" | wc -c | tr -d '[:space:]')
-    chars=$(printf '%s' "$text" | wc -m | tr -d '[:space:]')
-    echo $((chars + (bytes - chars) / 2))
-}
-
-pad_text() {
-    local text="$1"
-    local width="$2"
-    local visible pad
-    visible=$(text_display_width "$text")
-    printf '%s' "$text"
-    if [ "$visible" -lt "$width" ]; then
-        pad=$((width - visible))
-        printf '%*s' "$pad" ""
-    fi
-}
-
-fit_text() {
-    local text="$1"
-    local width="$2"
-    local visible ellipsis ellipsis_width result result_width char char_width i char_count
-
-    visible=$(text_display_width "$text")
-    if [ "$visible" -le "$width" ]; then
-        pad_text "$text" "$width"
-        return 0
-    fi
-
-    ellipsis="…"
-    ellipsis_width=$(text_display_width "$ellipsis")
-    result=""
-    result_width=0
-    char_count=${#text}
-
-    for ((i = 0; i < char_count; i++)); do
-        char="${text:i:1}"
-        char_width=$(text_display_width "$char")
-        if [ $((result_width + char_width + ellipsis_width)) -gt "$width" ]; then
-            break
-        fi
-        result+="$char"
-        result_width=$((result_width + char_width))
-    done
-
-    pad_text "${result}${ellipsis}" "$width"
-}
-
-show_service_panel() {
-    clear 2>/dev/null || true
-    print_header "HAO（HongAgentOps）"
-
-    echo -e "${WHITE}欢迎使用 HAO（HongAgentOps）部署脚本！${NC}"
-    echo ""
-    echo "本工具将引导您在云服务器上一键部署 AI 工具集群。"
-    echo ""
-
-    local col_index=4
-    local col_service=14
-    local col_status=8
-    local col_desc=68
-    local rule_index rule_service rule_status rule_desc
-    rule_index=$(repeat_char "─" $((col_index + 2)))
-    rule_service=$(repeat_char "─" $((col_service + 2)))
-    rule_status=$(repeat_char "─" $((col_status + 2)))
-    rule_desc=$(repeat_char "─" $((col_desc + 2)))
-
-    echo -e "${CYAN}请选择要安装的服务${NC}"
-    echo -e "${CYAN}┌${rule_index}┬${rule_service}┬${rule_status}┬${rule_desc}┐${NC}"
-    printf "${CYAN}│${NC} ${BOLD}"
-    pad_text "序号" "$col_index"
-    printf "${NC} ${CYAN}│${NC} ${BOLD}"
-    pad_text "服务" "$col_service"
-    printf "${NC} ${CYAN}│${NC} ${BOLD}"
-    pad_text "状态" "$col_status"
-    printf "${NC} ${CYAN}│${NC} ${BOLD}"
-    pad_text "组件说明" "$col_desc"
-    printf "${NC} ${CYAN}│${NC}\n"
-    echo -e "${CYAN}├${rule_index}┼${rule_service}┼${rule_status}┼${rule_desc}┤${NC}"
-
-    local svc short_name status desc option_idx
-    option_idx=1
-    for svc in "${ALL_SERVICES[@]}"; do
-        short_name=$(service_short_name "$svc")
-        desc="${SVC_DESC[$svc]}"
-
-        if [ "${ALREADY_INSTALLED[$svc]:-}" = "true" ]; then
-            status="已安装"
-        else
-            status="未安装"
-        fi
-
-        printf "${CYAN}│${NC} "
-        pad_text "$option_idx" "$col_index"
-        printf " ${CYAN}│${NC} "
-        pad_text "$short_name" "$col_service"
-        printf " ${CYAN}│${NC} "
-
-        if [ "$status" = "已安装" ]; then
-            printf "${GREEN}"
-            pad_text "$status" "$col_status"
-            printf "${NC}"
-        else
-            printf "${DIM}"
-            pad_text "$status" "$col_status"
-            printf "${NC}"
-        fi
-
-        printf " ${CYAN}│${NC} "
-        pad_text "$desc" "$col_desc"
-        printf " ${CYAN}│${NC}\n"
-        ((option_idx+=1))
-    done
-
-    echo -e "${CYAN}└${rule_index}┴${rule_service}┴${rule_status}┴${rule_desc}┘${NC}"
-    echo -e "${DIM}提示: 已安装服务也可选择，确认后会强制覆盖/重新安装。${NC}"
-    echo ""
-}
-
-# ==================== 选择服务 ====================
-
-select_services() {
-    local i=1 raw svc
-    declare -A idx_to_svc
-
-    # 每一轮只允许选择一个服务；序号与首页表格第一列一致。
-    for svc in "${ALL_SERVICES[@]}"; do
-        idx_to_svc[$i]="$svc"
-        ((i++))
-    done
-
-    echo "  输入表格序号选择一个服务"
-    echo "  已安装服务也可选择，确认后会强制覆盖/重新安装"
-    echo "  输入 q 退出"
-    echo ""
-
-    while true; do
-        read -r -p "请选择 [1-$((i-1)) / q]: " raw
-        raw="${raw#"${raw%%[![:space:]]*}"}"
-        raw="${raw%"${raw##*[![:space:]]}"}"
-
-        case "$raw" in
-            [Qq])  echo ""; log_info "已取消部署。"; exit 0 ;;
-            "")   continue ;;
-        esac
-
-        if [[ "$raw" =~ [[:space:]] ]]; then
-            echo -e "${YELLOW}每次只能选择一个服务，请只输入一个序号。${NC}" >&2
-            continue
-        fi
-
-        if ! [[ "$raw" =~ ^[0-9]+$ ]] || [ "$raw" -lt 1 ] || [ "$raw" -ge "$i" ]; then
-            echo -e "${YELLOW}无效选项: $raw${NC}" >&2
-            continue
-        fi
-
-        svc="${idx_to_svc[$raw]}"
-        TO_INSTALL[$svc]=true
-        break
-    done
-
-    echo ""
-    return 0
-}
-
-# ==================== 服务选择后的概览确认 ====================
-
-selected_service_id() {
-    local svc
-    for svc in "${ALL_SERVICES[@]}"; do
-        if [ "${TO_INSTALL[$svc]:-}" = "true" ]; then
-            echo "$svc"
-            return 0
-        fi
-    done
-    return 1
-}
-
-overview_table_begin() {
-    local col_item=16
-    local col_value=74
-    local rule_item rule_value
-    rule_item=$(repeat_char "─" $((col_item + 2)))
-    rule_value=$(repeat_char "─" $((col_value + 2)))
-
-    echo -e "${CYAN}┌${rule_item}┬${rule_value}┐${NC}"
-    printf "${CYAN}│${NC} ${BOLD}"
-    fit_text "检查项" "$col_item"
-    printf "${NC} ${CYAN}│${NC} ${BOLD}"
-    fit_text "当前状态 / 配置" "$col_value"
-    printf "${NC} ${CYAN}│${NC}\n"
-    echo -e "${CYAN}├${rule_item}┼${rule_value}┤${NC}"
-}
-
-overview_item() {
-    local label="$1"
-    local value="$2"
-    local col_item=16
-    local col_value=74
-
-    printf "${CYAN}│${NC} "
-    fit_text "$label" "$col_item"
-    printf " ${CYAN}│${NC} "
-    fit_text "$value" "$col_value"
-    printf " ${CYAN}│${NC}\n"
-}
-
-overview_table_end() {
-    local col_item=16
-    local col_value=74
-    local rule_item rule_value
-    rule_item=$(repeat_char "─" $((col_item + 2)))
-    rule_value=$(repeat_char "─" $((col_value + 2)))
-    echo -e "${CYAN}└${rule_item}┴${rule_value}┘${NC}"
-}
-
-active_swap_summary() {
-    local summary
-    summary=$(swapon --show=NAME,SIZE,USED --noheadings 2>/dev/null | awk '{print $1" "$2" used "$3}' | paste -sd '; ' - || true)
-    echo "${summary:-未启用}"
-}
-
-service_active_text() {
-    local unit="$1"
-    if systemctl is-active --quiet "$unit" 2>/dev/null; then
-        echo "运行中"
-    elif systemctl list-unit-files "$unit" >/dev/null 2>&1; then
-        echo "已安装，未运行"
-    else
-        echo "未安装"
-    fi
 }
 
 compose_running_text() {
@@ -1230,256 +882,31 @@ compose_running_text() {
     fi
 }
 
-docker_log_rotation_text() {
-    if [ ! -f /etc/docker/daemon.json ]; then
-        echo "未配置"
-        return 0
-    fi
-    if grep -q '"max-size"[[:space:]]*:[[:space:]]*"50m"' /etc/docker/daemon.json 2>/dev/null \
-        && grep -q '"max-file"[[:space:]]*:[[:space:]]*"3"' /etc/docker/daemon.json 2>/dev/null; then
-        echo "已配置 (50m × 3)"
-    else
-        echo "daemon.json 存在，但未检测到 HAO 默认轮转值"
-    fi
-}
-
-show_maintenance_overview() {
-    local fail2ban_state sshd_jail journald_state docker_logs marker_state
-    fail2ban_state="未安装"
-    if command -v fail2ban-client &>/dev/null; then
-        fail2ban_state=$(service_active_text "fail2ban")
-    fi
-
-    sshd_jail="未启用或状态未知"
-    if command -v fail2ban-client &>/dev/null && fail2ban-client status sshd >/dev/null 2>&1; then
-        sshd_jail="已启用"
-    fi
-
-    if [ -f /etc/systemd/journald.conf.d/hao.conf ]; then
-        journald_state="已配置 (/etc/systemd/journald.conf.d/hao.conf)"
-    else
-        journald_state="未配置"
-    fi
-
-    docker_logs=$(docker_log_rotation_text)
-    marker_state="未记录"
-    [ -f /var/lib/hao/maintenance.installed ] && marker_state="已记录"
-
-    overview_item "安装标记" "$marker_state"
-    overview_item "fail2ban" "$fail2ban_state"
-    overview_item "SSH jail" "$sshd_jail"
-    overview_item "swap" "$(active_swap_summary)"
-    overview_item "journald" "$journald_state"
-    overview_item "Docker 日志" "$docker_logs"
-}
-
-show_nginx_overview() {
-    local nginx_version nginx_test http3_state conf_count
-    nginx_version=$(nginx -v 2>&1 | sed 's/^nginx version: //' || true)
-    [ -z "$nginx_version" ] && nginx_version="未安装"
-
-    if nginx -t >/dev/null 2>&1; then
-        nginx_test="通过"
-    else
-        nginx_test="失败或未安装"
-    fi
-
-    if detect_nginx_http3; then
-        http3_state="支持"
-    else
-        http3_state="未检测到"
-    fi
-
-    conf_count=$(find /etc/nginx/conf.d -maxdepth 1 -type f -name '*.conf' 2>/dev/null | wc -l | tr -d '[:space:]')
-    overview_item "版本" "$nginx_version"
-    overview_item "服务状态" "$(service_active_text nginx)"
-    overview_item "配置测试" "$nginx_test"
-    overview_item "HTTP/3" "$http3_state"
-    overview_item "站点配置" "${conf_count:-0} 个 conf.d 配置"
-}
-
-show_docker_overview() {
-    local docker_version compose_version running_count
-    docker_version=$(docker --version 2>/dev/null || echo "未安装")
-    compose_version=$(docker compose version 2>/dev/null || docker-compose --version 2>/dev/null || echo "未安装")
-    if command -v docker &>/dev/null; then
-        running_count=$(docker ps -q 2>/dev/null | wc -l | tr -d '[:space:]')
-    else
-        running_count="0"
-    fi
-
-    overview_item "Docker" "$docker_version"
-    overview_item "服务状态" "$(service_active_text docker)"
-    overview_item "Compose" "$compose_version"
-    overview_item "运行容器" "${running_count:-0} 个"
-    overview_item "日志轮转" "$(docker_log_rotation_text)"
-}
-
-show_cliproxy_overview() {
-    local mode service_state conf_path credentials_file nginx_conf version_text
-    mode="未部署"
-    service_state="未运行"
-    conf_path="-"
-    credentials_file="未生成"
-    version_text="-"
-
-    if [ -f /opt/docker-services/cliproxyapi/docker-compose.yml ]; then
-        mode="Docker Compose"
-        service_state=$(compose_running_text /opt/docker-services/cliproxyapi)
-        conf_path="/opt/docker-services/cliproxyapi/config.yaml"
-        credentials_file="/opt/docker-services/cliproxyapi/hao-credentials.txt"
-        [ ! -f "$credentials_file" ] && credentials_file="未生成"
-        version_text=$(cat /opt/docker-services/cliproxyapi/version.txt 2>/dev/null || echo "镜像版本未记录")
-    elif [ -f /opt/cliproxyapi/version.txt ] || [ -f /etc/systemd/system/cliproxyapi.service ]; then
-        mode="裸机 Systemd"
-        service_state=$(service_active_text cliproxyapi)
-        conf_path="/etc/cliproxyapi/config.yaml"
-        credentials_file="/opt/cliproxyapi/hao-credentials.txt"
-        [ ! -f "$credentials_file" ] && credentials_file="未生成"
-        version_text=$(cat /opt/cliproxyapi/version.txt 2>/dev/null || echo "未知")
-    fi
-
-    nginx_conf=$(find /etc/nginx/conf.d -maxdepth 1 -type f -name '*.conf' -exec grep -l 'CLI-PROXY-API-START' {} \; 2>/dev/null | paste -sd, - || true)
-    [ -z "$nginx_conf" ] && nginx_conf="未检测到"
-
-    overview_item "部署方式" "$mode"
-    overview_item "运行状态" "$service_state"
-    overview_item "版本/镜像" "$version_text"
-    overview_item "配置文件" "$conf_path"
-    overview_item "凭据文件" "$credentials_file"
-    overview_item "Nginx 配置" "$nginx_conf"
-}
-
-show_newapi_overview() {
-    local service_state credentials_file nginx_conf db_type
-    service_state=$(compose_running_text /opt/docker-services/new-api)
-    credentials_file="/opt/docker-services/new-api/hao-credentials.txt"
-    [ ! -f "$credentials_file" ] && credentials_file="未生成"
-
-    nginx_conf=$(find /etc/nginx/conf.d -maxdepth 1 -type f -name '*.conf' -exec grep -l 'NEW-API-START' {} \; 2>/dev/null | paste -sd, - || true)
-    [ -z "$nginx_conf" ] && nginx_conf="未检测到"
-
-    db_type="未检测到"
-    if [ -f /opt/docker-services/new-api/docker-compose.yml ]; then
-        if grep -q 'postgres' /opt/docker-services/new-api/docker-compose.yml 2>/dev/null; then
-            db_type="PostgreSQL"
-        elif grep -q 'mysql' /opt/docker-services/new-api/docker-compose.yml 2>/dev/null; then
-            db_type="MySQL"
-        fi
-    fi
-
-    overview_item "部署状态" "$service_state"
-    overview_item "数据库" "$db_type"
-    overview_item "凭据文件" "$credentials_file"
-    overview_item "Nginx 配置" "$nginx_conf"
-    overview_item "服务目录" "/opt/docker-services/new-api"
-}
-
-show_pi_overview() {
-    local pi_path pi_version
-    pi_path=$(command -v pi 2>/dev/null || echo "未安装")
-    pi_version="未安装"
-    if command -v pi &>/dev/null; then
-        pi_version=$(pi --version 2>/dev/null || pi -v 2>/dev/null || echo "已安装，版本未知")
-    fi
-
-    overview_item "命令路径" "$pi_path"
-    overview_item "版本" "$pi_version"
-    overview_item "用途" "终端 AI 编程助手"
-}
-
-show_selected_service_overview() {
-    local svc installed action confirm_default
-    svc=$(selected_service_id) || return 1
-    installed="未安装"
-    action="安装"
-    confirm_default="y"
-    if [ "${ALREADY_INSTALLED[$svc]:-}" = "true" ]; then
-        installed="已安装"
-        action="强制覆盖/重新安装"
-        confirm_default="n"
-    fi
-
-    echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║            🔎 服务概览               ║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
-    echo ""
-    echo -e "${BOLD}${SVC_NAME[$svc]}${NC} ${DIM}— ${SVC_DESC[$svc]}${NC}"
-    echo ""
-    overview_table_begin
-    overview_item "当前状态" "$installed"
-
-    case "$svc" in
-        "$SVC_MAINTENANCE") show_maintenance_overview ;;
-        "$SVC_NGINX")       show_nginx_overview ;;
-        "$SVC_DOCKER")      show_docker_overview ;;
-        "$SVC_CLIPROXY")    show_cliproxy_overview ;;
-        "$SVC_NEWAPI")      show_newapi_overview ;;
-        "$SVC_PI")          show_pi_overview ;;
-    esac
-    overview_table_end
-
-    echo ""
-    if [ "${ALREADY_INSTALLED[$svc]:-}" = "true" ]; then
-        echo -e "${YELLOW}该服务已安装，继续将执行强制覆盖/重新安装。${NC}"
-    fi
-
-    if confirm "是否继续${action} ${SVC_NAME[$svc]}？" "$confirm_default"; then
-        if [ "${ALREADY_INSTALLED[$svc]:-}" = "true" ]; then
-            FORCE_INSTALL[$svc]=true
-        fi
-        echo ""
-        return 0
-    fi
-
-    echo ""
-    log_info "已取消本次选择，返回首页。"
-    return 1
-}
-
 # ==================== 部署方式选择 ====================
 
 configure_deployment_modes() {
+    local requested_mode
+
     if [ "${TO_INSTALL[$SVC_CLIPROXY]:-}" != "true" ]; then
         CLIPROXY_DEPLOY_MODE="docker"
         SVC_DEPENDS[$SVC_CLIPROXY]="$SVC_NGINX $SVC_DOCKER"
         return
     fi
 
-    if [ -n "${HAO_CLIPROXY_MODE:-}" ]; then
-        local requested_mode="${HAO_CLIPROXY_MODE:-}"
-        case "${requested_mode,,}" in
-            docker|compose|docker-compose)
-                CLIPROXY_DEPLOY_MODE="docker"
-                ;;
-            bare|binary|systemd|native|host)
-                CLIPROXY_DEPLOY_MODE="bare"
-                ;;
-            *)
-                log_error "未知 CliproxyAPI 部署方式: $requested_mode"
-                log_info "可用值: docker / bare"
-                exit 1
-                ;;
-        esac
-    else
-        echo -e "${CYAN}>>> CliproxyAPI 部署方式${NC}"
-        echo ""
-        echo "  1) Docker Compose（推荐，默认）— 镜像升级简单，配置/数据集中在 /opt/docker-services/cliproxyapi"
-        echo "  2) 裸机二进制 + Systemd       — 低开销，适合只单独运行 CPA"
-        echo ""
-
-        while true; do
-            read -r -p "请选择 [1/2，默认 1]: " deploy_choice
-            deploy_choice="${deploy_choice:-1}"
-            case "$deploy_choice" in
-                1) CLIPROXY_DEPLOY_MODE="docker"; break ;;
-                2) CLIPROXY_DEPLOY_MODE="bare"; break ;;
-                *) echo -e "${YELLOW}无效选择，请重新输入${NC}" ;;
-            esac
-        done
-        echo ""
-    fi
+    requested_mode="${HAO_CLIPROXY_MODE:-$CLIPROXY_DEPLOY_MODE}"
+    case "${requested_mode,,}" in
+        docker|compose|docker-compose)
+            CLIPROXY_DEPLOY_MODE="docker"
+            ;;
+        bare|binary|systemd|native|host)
+            CLIPROXY_DEPLOY_MODE="bare"
+            ;;
+        *)
+            log_error "未知 CliproxyAPI 部署方式: $requested_mode"
+            log_info "可用值: docker / bare"
+            exit 1
+            ;;
+    esac
 
     if [ "$CLIPROXY_DEPLOY_MODE" = "docker" ]; then
         SVC_DEPENDS[$SVC_CLIPROXY]="$SVC_NGINX $SVC_DOCKER"
@@ -1532,18 +959,6 @@ is_web_service() {
     esac
 }
 
-web_service_count() {
-    local count=0
-    local svc
-    for svc in "${INSTALL_ORDER[@]}"; do
-        if is_web_service "$svc" \
-            && { [ "${ALREADY_INSTALLED[$svc]:-}" != "true" ] || [ "${FORCE_INSTALL[$svc]:-}" = "true" ]; }; then
-            ((count+=1))
-        fi
-    done
-    echo "$count"
-}
-
 needs_access_mode() {
     local svc
     for svc in "${INSTALL_ORDER[@]}"; do
@@ -1553,242 +968,6 @@ needs_access_mode() {
         fi
     done
     return 1
-}
-
-# ==================== 全局配置：访问模式 ====================
-
-configure_access_mode() {
-    local web_count svc
-    web_count=$(web_service_count)
-
-    echo ""
-    echo -e "${CYAN}>>> 配置访问方式${NC}"
-    echo ""
-
-    if [ "$web_count" -gt 1 ]; then
-        ACCESS_MODE="domain"
-        echo -e "${YELLOW}检测到多个 Web 服务。为避免 Nginx 配置互相覆盖，必须为每个服务配置独立域名。${NC}"
-        echo -e "${DIM}例如: cliproxy.example.com 与 newapi.example.com${NC}"
-        echo ""
-    else
-        echo "  1) 使用域名（推荐） — 自动申请 Let's Encrypt 免费证书"
-        echo "  2) 使用 IP 地址       — 自签名证书，无需域名"
-        echo "  3) 仅使用 HTTP       — 无 SSL 证书，仅限内网/开发环境"
-        echo ""
-
-        while true; do
-            read -r -p "请选择 [1/2/3]: " choice
-            case "$choice" in
-                1) ACCESS_MODE="domain"; break ;;
-                2) ACCESS_MODE="ip"; break ;;
-                3) ACCESS_MODE="http"; break ;;
-                *) echo -e "${YELLOW}无效选择，请重新输入${NC}" ;;
-            esac
-        done
-    fi
-
-    case "$ACCESS_MODE" in
-        domain)
-            echo ""
-            local svc domain existing_svc duplicate
-            for svc in "${INSTALL_ORDER[@]}"; do
-                if ! is_web_service "$svc" \
-                    || { [ "${ALREADY_INSTALLED[$svc]:-}" = "true" ] && [ "${FORCE_INSTALL[$svc]:-}" != "true" ]; }; then
-                    continue
-                fi
-
-                while true; do
-                    read -r -p "请输入 ${SVC_NAME[$svc]} 域名 (例如 ${svc}.example.com): " domain
-                    if ! validate_domain "$domain"; then
-                        continue
-                    fi
-
-                    duplicate=false
-                    for existing_svc in "${!SERVICE_DOMAIN[@]}"; do
-                        if [ "${SERVICE_DOMAIN[$existing_svc]}" = "$domain" ]; then
-                            duplicate=true
-                            break
-                        fi
-                    done
-
-                    if [ "$duplicate" = true ]; then
-                        log_error "域名已被其他服务使用，请为每个 Web 服务使用独立域名。"
-                        continue
-                    fi
-
-                    SERVICE_DOMAIN[$svc]="$domain"
-                    break
-                done
-            done
-            ;;
-        ip|http)
-            DOMAIN="$(detect_server_ip)"
-            if [ -z "$DOMAIN" ] || ! validate_ip "$DOMAIN"; then
-                echo ""
-                while true; do
-                    read -r -p "无法自动获取有效公网 IP，请手动输入: " DOMAIN
-                    validate_ip "$DOMAIN" && break
-                done
-            fi
-
-            if [ "$ACCESS_MODE" = "http" ]; then
-                echo ""
-                echo -e "${YELLOW}⚠️  HTTP 模式警告：数据传输不加密，API Key 可能泄露${NC}"
-                echo -e "${YELLOW}   仅建议在内网或开发环境使用${NC}"
-            fi
-
-            echo ""
-            echo -e "服务器 IP: ${GREEN}$DOMAIN${NC}"
-            read -r -p "确认使用此 IP？(Y/n): " confirm_ip
-            case "$confirm_ip" in
-                [Nn])
-                    while true; do
-                        read -r -p "请输入 IP 地址: " DOMAIN
-                        validate_ip "$DOMAIN" && break
-                    done
-                    ;;
-            esac
-
-            local single_svc=""
-            for svc in "${INSTALL_ORDER[@]}"; do
-                if is_web_service "$svc" \
-                    && { [ "${ALREADY_INSTALLED[$svc]:-}" != "true" ] || [ "${FORCE_INSTALL[$svc]:-}" = "true" ]; }; then
-                    single_svc="$svc"
-                    break
-                fi
-            done
-            [ -n "$single_svc" ] && SERVICE_DOMAIN[$single_svc]="$DOMAIN"
-            ;;
-    esac
-}
-
-# ==================== 服务级配置 ====================
-
-configure_service() {
-    local svc="$1"
-
-    case "$svc" in
-        "$SVC_CLIPROXY")
-            echo ""
-            echo -e "${CYAN}>>> CliproxyAPI 管理面板密码${NC}"
-            echo "  留空将自动生成随机密码"
-            echo ""
-            read -r -p "管理密码 (留空=自动生成): " ADMIN_PASSWORD
-            if [ -n "$ADMIN_PASSWORD" ]; then
-                echo -e "${GREEN}已设置自定义密码${NC}"
-            else
-                echo -e "${DIM}将在安装时自动生成${NC}"
-            fi
-            ;;
-        "$SVC_NEWAPI")
-            echo ""
-            echo -e "${CYAN}>>> New-API 数据库类型${NC}"
-            echo "  1) PostgreSQL（推荐）"
-            echo "  2) MySQL"
-            echo ""
-            while true; do
-                read -r -p "请选择 [1/2]: " db_choice
-                case "$db_choice" in
-                    1) DB_TYPE="postgresql"; break ;;
-                    2) DB_TYPE="mysql"; break ;;
-                    *) echo -e "${YELLOW}无效选择${NC}" ;;
-                esac
-            done
-            ;;
-    esac
-}
-
-collect_service_configs() {
-    for svc in "${INSTALL_ORDER[@]}"; do
-        case "$svc" in
-            "$SVC_CLIPROXY"|"$SVC_NEWAPI")
-                configure_service "$svc"
-                ;;
-        esac
-    done
-}
-
-# ==================== 确认总览 ====================
-
-show_review() {
-    echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║            📋 配置总览               ║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════╝${NC}"
-    echo ""
-
-    if needs_access_mode; then
-        echo -e "${BOLD}全局配置:${NC}"
-        case "$ACCESS_MODE" in
-            domain) echo -e "  访问模式: ${GREEN}域名（Let's Encrypt）${NC}" ;;
-            ip)     echo -e "  访问模式: ${GREEN}IP（自签名证书）${NC}" ;;
-            http)   echo -e "  访问模式: ${GREEN}HTTP（无 SSL）${NC}" ;;
-        esac
-
-        local svc
-        if [ "$ACCESS_MODE" = "domain" ]; then
-            for svc in "${INSTALL_ORDER[@]}"; do
-                if is_web_service "$svc" && [ -n "${SERVICE_DOMAIN[$svc]:-}" ]; then
-                    echo -e "  ${SVC_NAME[$svc]}: ${GREEN}${SERVICE_DOMAIN[$svc]}${NC}"
-                fi
-            done
-        else
-            echo -e "  IP:       ${GREEN}$DOMAIN${NC}"
-        fi
-        echo ""
-    fi
-
-    echo -e "${BOLD}待安装服务 (${#INSTALL_ORDER[@]} 个):${NC}"
-    echo ""
-
-    for svc in "${INSTALL_ORDER[@]}"; do
-        local short_name desc extra=""
-        short_name=$(service_short_name "$svc")
-        desc="${SVC_DESC[$svc]}"
-
-        case "$svc" in
-            "$SVC_CLIPROXY")
-                if [ "$CLIPROXY_DEPLOY_MODE" = "docker" ]; then
-                    extra="部署: Docker Compose"
-                else
-                    extra="部署: 裸机 Systemd"
-                fi
-                if [ -n "$ADMIN_PASSWORD" ]; then
-                    extra="$extra，管理密码: 已设置"
-                else
-                    extra="$extra，管理密码: 自动生成"
-                fi
-                ;;
-            "$SVC_NEWAPI")
-                local db_label="PostgreSQL"
-                [ "$DB_TYPE" = "mysql" ] && db_label="MySQL"
-                extra="数据库: $db_label"
-                ;;
-        esac
-
-        if [ "${FORCE_INSTALL[$svc]:-}" = "true" ]; then
-            if [ -n "$extra" ]; then
-                extra="强制覆盖安装，$extra"
-            else
-                extra="强制覆盖安装"
-            fi
-        fi
-
-        printf "  ${GREEN}✓ %-14s${NC} ${DIM}— %s${NC}" "$short_name" "$desc"
-        if [ -n "$extra" ]; then
-            printf " ${YELLOW}(%s)${NC}" "$extra"
-        fi
-        printf "\n"
-    done
-
-    echo ""
-    echo -e "${YELLOW}按 Enter 确认并开始安装 | 输入 n 取消${NC}"
-    echo ""
-
-    read -r -p "确认? [Y/n]: " confirm
-    case "$confirm" in
-        [Nn]) echo ""; log_info "部署已取消。"; exit 0 ;;
-    esac
 }
 
 # ==================== 安装执行 ====================
@@ -1850,12 +1029,20 @@ run_install() {
         case "$svc" in
             "$SVC_CLIPROXY")
                 extra_env+=("HAO_CLIPROXY_MODE=$CLIPROXY_DEPLOY_MODE")
+                if [ "$CLIPROXY_DEPLOY_MODE" = "docker" ]; then
+                    extra_env+=("HAO_CLIPROXY_IMAGE=$CLIPROXY_IMAGE")
+                fi
                 [ -n "$ADMIN_PASSWORD" ] && extra_env+=("HAO_ADMIN_PASSWORD=$ADMIN_PASSWORD")
                 ;;
             "$SVC_NEWAPI")
                 extra_env+=("HAO_DB_TYPE=$DB_TYPE")
+                extra_env+=("HAO_NEWAPI_IMAGE=$NEWAPI_IMAGE")
                 ;;
             "$SVC_PI")
+                extra_env+=("HAO_NO_PROMPT=1")
+                ;;
+            "$SVC_CLAUDECODE")
+                # HAO_CC_* 配置变量由 profile 导出后随环境继承，无需逐个转发。
                 extra_env+=("HAO_NO_PROMPT=1")
                 ;;
         esac
@@ -1942,6 +1129,12 @@ print_summary() {
                 echo "    pi --help  |  pi -p \"你的问题\""
                 echo ""
                 ;;
+            "$SVC_CLAUDECODE")
+                echo "  Claude Code:"
+                echo "    claude --version  |  claude"
+                echo "    配置文件: ~/.claude/settings.json（修改后需重启 claude）"
+                echo ""
+                ;;
         esac
     done
 
@@ -1968,13 +1161,15 @@ AI-native server deployment and model operations toolkit
 
 通用参数:
   --profile FILE                  读取 .env 风格部署配置
-  --services LIST                 逗号分隔服务: maintenance,nginx,docker,cliproxyapi,new-api,pi
+  --services LIST                 逗号分隔服务: maintenance,nginx,docker,cliproxyapi,new-api,pi,claude-code
   --access-mode MODE              domain | ip | http
   --domain VALUE                  单个 Web 服务域名/IP
   --cliproxy-domain VALUE         CliproxyAPI 专用域名
   --newapi-domain VALUE           New-API 专用域名
   --cliproxy-mode MODE            docker | bare
+  --cliproxy-image IMAGE          CliproxyAPI Docker 镜像
   --db-type TYPE                  postgresql | mysql
+  --newapi-image IMAGE            New-API Docker 镜像
   --admin-password VALUE          CliproxyAPI 管理密码；省略则自动生成
   --yes                           apply 时确认执行计划
 
@@ -2010,6 +1205,7 @@ normalize_service_id() {
         cliproxy|cliproxyapi|cpa|cli-proxy-api) echo "$SVC_CLIPROXY" ;;
         newapi|new-api) echo "$SVC_NEWAPI" ;;
         pi|pi-coding-agent|coding-agent) echo "$SVC_PI" ;;
+        claude-code|claudecode|claude|cc) echo "$SVC_CLAUDECODE" ;;
         *)
             echo "未知服务: $1" >&2
             return 1
@@ -2027,25 +1223,74 @@ service_env_prefix() {
 
 load_profile_file() {
     local profile="$1"
+    local line key value line_no=0
 
     if [ ! -r "$profile" ]; then
         echo "[ERROR] profile 不存在或不可读: $profile" >&2
         exit 1
     fi
 
-    set -a
-    # shellcheck source=/dev/null
-    . "$profile"
-    set +a
+    while IFS= read -r line || [ -n "$line" ]; do
+        line_no=$((line_no + 1))
+        line="${line%$'\r'}"
+        line="$(trim_value "$line")"
+
+        [ -z "$line" ] && continue
+        [[ "$line" == \#* ]] && continue
+
+        if [[ "$line" == export[[:space:]]* ]]; then
+            line="$(trim_value "${line#export}")"
+        fi
+
+        if [[ "$line" != *=* ]]; then
+            echo "[ERROR] profile 第 ${line_no} 行格式无效，应为 HAO_KEY=value。" >&2
+            exit 1
+        fi
+
+        key="$(trim_value "${line%%=*}")"
+        value="$(trim_value "${line#*=}")"
+
+        if ! [[ "$key" =~ ^HAO_[A-Z0-9_]+$ ]]; then
+            echo "[ERROR] profile 第 ${line_no} 行包含不支持的变量: $key。仅允许 HAO_* 变量。" >&2
+            exit 1
+        fi
+
+        if [[ "$value" == \"* && "$value" != *\" ]]; then
+            echo "[ERROR] profile 第 ${line_no} 行双引号未闭合。" >&2
+            exit 1
+        fi
+        if [[ "$value" == \'* && "$value" != *\' ]]; then
+            echo "[ERROR] profile 第 ${line_no} 行单引号未闭合。" >&2
+            exit 1
+        fi
+
+        case "$value" in
+            \"*\")
+                value="${value:1:${#value}-2}"
+                value="${value//\\\"/\"}"
+                value="${value//\\\\/\\}"
+                ;;
+            \'*\')
+                value="${value:1:${#value}-2}"
+                ;;
+            *)
+                value="${value%%#*}"
+                value="$(trim_value "$value")"
+                ;;
+        esac
+
+        printf -v "$key" '%s' "$value"
+        export "${key?}"
+    done < "$profile"
 }
 
 CLI_COMMAND=""
 CLI_PROFILE=""
-CLI_SERVICES="${HAO_SERVICES:-}"
+CLI_SERVICES=""
 CLI_ASSUME_YES=false
 CLI_STATUS_SERVICES=""
-CLI_CLIPROXY_DOMAIN="${HAO_CLIPROXY_DOMAIN:-}"
-CLI_NEWAPI_DOMAIN="${HAO_NEWAPI_DOMAIN:-}"
+CLI_CLIPROXY_DOMAIN=""
+CLI_NEWAPI_DOMAIN=""
 
 parse_cli_args() {
     CLI_COMMAND="$1"
@@ -2086,8 +1331,16 @@ parse_cli_args() {
                 CLIPROXY_DEPLOY_MODE="${2:-}"
                 shift 2
                 ;;
+            --cliproxy-image)
+                CLIPROXY_IMAGE="${2:-}"
+                shift 2
+                ;;
             --db-type)
                 DB_TYPE="${2:-}"
+                shift 2
+                ;;
+            --newapi-image)
+                NEWAPI_IMAGE="${2:-}"
                 shift 2
                 ;;
             --admin-password)
@@ -2115,6 +1368,8 @@ parse_cli_args() {
     DOMAIN="${DOMAIN:-${HAO_DOMAIN:-}}"
     CLIPROXY_DEPLOY_MODE="${CLIPROXY_DEPLOY_MODE:-${HAO_CLIPROXY_MODE:-docker}}"
     DB_TYPE="${DB_TYPE:-${HAO_DB_TYPE:-postgresql}}"
+    CLIPROXY_IMAGE="${CLIPROXY_IMAGE:-${HAO_CLIPROXY_IMAGE:-eceasy/cli-proxy-api:latest}}"
+    NEWAPI_IMAGE="${NEWAPI_IMAGE:-${HAO_NEWAPI_IMAGE:-calciumion/new-api:latest}}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-${HAO_ADMIN_PASSWORD:-}}"
     CLI_CLIPROXY_DOMAIN="${CLI_CLIPROXY_DOMAIN:-${HAO_CLIPROXY_DOMAIN:-}}"
     CLI_NEWAPI_DOMAIN="${CLI_NEWAPI_DOMAIN:-${HAO_NEWAPI_DOMAIN:-}}"
@@ -2177,6 +1432,11 @@ validate_cli_config() {
             exit 1
             ;;
     esac
+
+    if [ -z "$CLIPROXY_IMAGE" ] || [ -z "$NEWAPI_IMAGE" ]; then
+        echo "[ERROR] Docker 镜像名称不能为空。" >&2
+        exit 1
+    fi
 
     if [ "${TO_INSTALL[$SVC_CLIPROXY]:-}" = "true" ] && [ -n "$CLI_CLIPROXY_DOMAIN" ]; then
         SERVICE_DOMAIN[$SVC_CLIPROXY]="$CLI_CLIPROXY_DOMAIN"
@@ -2274,6 +1534,9 @@ print_cli_plan() {
             case "$svc" in
                 "$SVC_CLIPROXY")
                     echo "    deploy_mode: $CLIPROXY_DEPLOY_MODE"
+                    if [ "$CLIPROXY_DEPLOY_MODE" = "docker" ]; then
+                        echo "    image: $CLIPROXY_IMAGE"
+                    fi
                     if [ -n "$ADMIN_PASSWORD" ]; then
                         echo "    admin_password: provided (hidden)"
                     else
@@ -2282,6 +1545,17 @@ print_cli_plan() {
                     ;;
                 "$SVC_NEWAPI")
                     echo "    database: $DB_TYPE"
+                    echo "    image: $NEWAPI_IMAGE"
+                    ;;
+                "$SVC_CLAUDECODE")
+                    echo "    gateway: ${HAO_CC_BASE_URL:-default (api.anthropic.com)}"
+                    echo "    model: ${HAO_CC_MODEL:-default}"
+                    if [ -n "${HAO_CC_AUTH_TOKEN:-}" ] || [ -n "${HAO_CC_TOKEN_FILE:-}" ]; then
+                        echo "    token: provided (hidden)"
+                    else
+                        echo "    token: not provided"
+                    fi
+                    echo "    settings_user: ${HAO_CC_USER:-${SUDO_USER:-root}}"
                     ;;
             esac
         done
@@ -2368,6 +1642,15 @@ run_preflight_checks() {
         fi
     done
 
+    if [ "${TO_INSTALL[$SVC_CLAUDECODE]:-}" = "true" ] && [ -n "${HAO_CC_TOKEN_FILE:-}" ]; then
+        if [ -r "$HAO_CC_TOKEN_FILE" ]; then
+            report_check "ok" "Claude Code token file" "$HAO_CC_TOKEN_FILE"
+        else
+            report_check "fail" "Claude Code token file" "not readable: $HAO_CC_TOKEN_FILE"
+            failures=$((failures + 1))
+        fi
+    fi
+
     if needs_access_mode; then
         server_ip="$(detect_server_ip)"
         [ -n "$server_ip" ] && report_check "ok" "Detected server IP" "$server_ip" || report_check "warn" "Detected server IP" "not available"
@@ -2431,6 +1714,7 @@ print_cli_status() {
             "$SVC_CLIPROXY")    echo "$(compose_running_text /opt/docker-services/cliproxyapi)" ;;
             "$SVC_NEWAPI")      echo "$(compose_running_text /opt/docker-services/new-api)" ;;
             "$SVC_PI")          echo "$(command -v pi 2>/dev/null || echo unavailable)" ;;
+            "$SVC_CLAUDECODE")  echo "$(command -v claude 2>/dev/null || echo unavailable)" ;;
         esac
     done
 }
@@ -2465,7 +1749,11 @@ run_cli_command() {
             setup_logging "hao"
             print_cli_plan
             echo ""
-            run_preflight_checks
+            if ! run_preflight_checks; then
+                echo ""
+                echo "[ERROR] preflight 存在失败项，已停止 apply。请修复后重试。" >&2
+                exit 1
+            fi
             echo ""
             run_install
             print_summary
@@ -2506,64 +1794,6 @@ run_cli_command() {
             exit 1
             ;;
     esac
-}
-
-# ==================== 主流程 ====================
-
-main() {
-    check_root
-    setup_logging "hao"
-
-    while true; do
-        reset_iteration_state
-
-        # ── Step 1: 检测 + 展示 ──
-        detect_installed_services
-        show_service_panel
-
-        # ── Step 2: 选择服务 ──
-        if ! select_services; then
-            continue
-        fi
-
-        # ── Step 2.5: 服务概览 + 用户确认 ──
-        if ! show_selected_service_overview; then
-            continue
-        fi
-
-        # ── Step 3: 部署方式 + 依赖解析 ──
-        configure_deployment_modes
-        resolve_deps
-
-        # ── Step 4: 全局配置 ──
-        if needs_access_mode; then
-            configure_access_mode
-        fi
-
-        # ── Step 5: 服务级配置 ──
-        collect_service_configs
-
-        # ── Step 6: 确认 ──
-        show_review
-
-        # ── Step 7: 安装 ──
-        run_install
-
-        # ── Step 8: 总结 ──
-        print_summary
-
-        local round_failed="$FAILED"
-        if [ "$round_failed" -ne 0 ]; then
-            log_error "部分服务安装失败，请根据上方日志排查。"
-        fi
-
-        if ! prompt_return_home; then
-            if [ "$round_failed" -ne 0 ]; then
-                exit 1
-            fi
-            exit 0
-        fi
-    done
 }
 
 # ==================== 执行 ====================

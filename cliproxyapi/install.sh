@@ -161,6 +161,7 @@ select_deploy_mode() {
 
 run_docker_deploy() {
     local backup_dir="" access_url management_url protocol access_mode_text credentials_file domain_ssl_dir conf_file
+    local existing_domain_conf conf_backup
 
     log_step "[1/7] 创建 Docker Compose 目录..."
     mkdir -p "$DOCKER_SERVICE_DIR" "$DOCKER_AUTH_DIR" "$DOCKER_LOG_DIR"
@@ -305,7 +306,16 @@ COMPOSE_EOF
 
         mkdir -p "$domain_ssl_dir"
         conf_file="$CONF_D/${DOMAIN}.conf"
-        [ -f "$conf_file" ] && backup_file "$conf_file"
+        existing_domain_conf="$(find_nginx_conf_by_server_name "$DOMAIN" "$CONF_D" || true)"
+        if [ -n "$existing_domain_conf" ]; then
+            if ! grep -q "CLI-PROXY-API-START" "$existing_domain_conf"; then
+                log_error "Nginx server_name 已被其他配置占用: $existing_domain_conf"
+                log_error "请为 CliproxyAPI 使用独立域名，避免覆盖其他服务。"
+                exit 1
+            fi
+            conf_file="$existing_domain_conf"
+        fi
+        conf_backup="$(backup_file_for_write "$conf_file")"
 
         read -r -d '' LOCATION_BLOCKS <<'LOC_EOF' || true
     #CLI-PROXY-API-START
@@ -490,6 +500,9 @@ NGX_H2
         else
             log_error "Nginx 配置测试失败"
             nginx -t 2>&1 || true
+            restore_file_after_failed_write "$conf_file" "$conf_backup"
+            nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+            exit 1
         fi
     else
         log_info "升级模式：保留现有 Nginx / SSL 配置"
@@ -1072,12 +1085,15 @@ LOC_EOF
     CONF_FILE="$CONF_D/${DOMAIN}.conf"
 
     EXISTING_DOMAIN_CONF="$(find_nginx_conf_by_server_name "$DOMAIN" "$CONF_D" || true)"
-    if [ -n "$EXISTING_DOMAIN_CONF" ] && ! grep -q "CLI-PROXY-API-START" "$EXISTING_DOMAIN_CONF"; then
-        log_error "Nginx server_name 已被其他配置占用: $EXISTING_DOMAIN_CONF"
-        log_error "请为 CliproxyAPI 使用独立域名，避免覆盖其他服务。"
-        exit 1
+    if [ -n "$EXISTING_DOMAIN_CONF" ]; then
+        if ! grep -q "CLI-PROXY-API-START" "$EXISTING_DOMAIN_CONF"; then
+            log_error "Nginx server_name 已被其他配置占用: $EXISTING_DOMAIN_CONF"
+            log_error "请为 CliproxyAPI 使用独立域名，避免覆盖其他服务。"
+            exit 1
+        fi
+        CONF_FILE="$EXISTING_DOMAIN_CONF"
     fi
-    [ -f "$CONF_FILE" ] && backup_file "$CONF_FILE"
+    CONF_BACKUP="$(backup_file_for_write "$CONF_FILE")"
 
     if [ "$USE_HTTP_ONLY" = true ]; then
         # HTTP 模式
@@ -1192,6 +1208,9 @@ NGX_H2
     else
         log_error "Nginx 配置测试失败"
         nginx -t 2>&1 || true
+        restore_file_after_failed_write "$CONF_FILE" "$CONF_BACKUP"
+        nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+        exit 1
     fi
 fi
 

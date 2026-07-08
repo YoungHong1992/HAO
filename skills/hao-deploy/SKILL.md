@@ -1,13 +1,13 @@
 ---
 name: hao-deploy
-description: AI-assisted deployment of HAO (HongAgentOps) services on Debian or Ubuntu VPS hosts. Use when Codex needs to plan, preflight, apply, inspect, or troubleshoot server deployments for Maintenance, Nginx, Docker, CliproxyAPI, New-API, or Pi using the repository's hao CLI and profile-driven workflow.
+description: AI-assisted deployment of HAO (HongAgentOps) services on Debian or Ubuntu VPS hosts. Use when an AI agent needs to plan, preflight, apply, inspect, or troubleshoot server deployments for Maintenance, Nginx, Docker, CliproxyAPI, New-API, Pi, or Claude Code using the repository's hao CLI and profile-driven workflow.
 ---
 
 # HAO Deploy
 
 ## Workflow
 
-Use HAO as a deterministic executor, not as a chatty terminal menu. Keep all human interaction in the Codex conversation, then call `hao` with explicit arguments or a generated `.env` profile.
+Use HAO as a deterministic executor, not as a chatty terminal menu. Keep all human interaction in the agent conversation, then call `hao` with explicit arguments or a generated `.env` profile.
 
 1. Clarify the target service set, access mode, domains/IPs, database choice, and deployment mode.
 2. Generate or inspect a profile with non-secret deployment choices.
@@ -31,6 +31,18 @@ sudo ./scripts/hao-run.sh apply --profile deploy.env --yes
 ```
 
 If the script cannot find the repository, set `HAO_REPO_DIR=/path/to/hao`.
+
+## Installation
+
+To install this skill into an agent runtime's skill directory, run `scripts/install-skill.sh` from a full clone of the repository:
+
+```bash
+./scripts/install-skill.sh                       # Claude Code: ~/.claude/skills/hao-deploy (symlink)
+./scripts/install-skill.sh --dir /path/to/skills # other runtimes
+./scripts/install-skill.sh --copy                # copy instead of symlink; set HAO_REPO_DIR afterwards
+```
+
+Symlink installs track the repository: `git pull` updates the skill. Installation is optional — an agent can also just read this file and `references/` from the clone.
 
 ## Profile
 
