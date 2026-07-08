@@ -52,3 +52,32 @@ if ! grep -q 'image: example/new-api:v1' <<<"$plan_output"; then
   echo "Plan did not include requested New-API image" >&2
   exit 1
 fi
+
+# claude-code: plan must never print the token value
+CC_PROFILE="$TMP_DIR/cc.env"
+cat > "$CC_PROFILE" <<'EOF'
+HAO_SERVICES="claude-code"
+HAO_CC_BASE_URL="https://gw.example.com"
+HAO_CC_AUTH_TOKEN="sk-secret-should-not-appear"
+HAO_CC_MODEL="claude-fable-5"
+EOF
+
+cc_output="$("$ROOT_DIR/hao" plan --profile "$CC_PROFILE")"
+if ! grep -q '  - Claude Code:' <<<"$cc_output"; then
+  echo "Plan did not include claude-code service" >&2
+  exit 1
+fi
+if grep -q 'sk-secret-should-not-appear' <<<"$cc_output"; then
+  echo "Plan leaked claude-code token value" >&2
+  exit 1
+fi
+if ! grep -q 'token: provided (hidden)' <<<"$cc_output"; then
+  echo "Plan did not mark claude-code token as hidden" >&2
+  exit 1
+fi
+
+# alias resolution
+if ! "$ROOT_DIR/hao" plan --services cc >/dev/null; then
+  echo "Alias cc did not resolve to claude-code" >&2
+  exit 1
+fi

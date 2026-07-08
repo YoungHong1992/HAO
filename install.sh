@@ -116,6 +116,7 @@ bootstrap_full_repo() {
         || [ ! -f "$root_dir/cliproxyapi/install.sh" ] \
         || [ ! -f "$root_dir/new-api/install.sh" ] \
         || [ ! -f "$root_dir/pi-coding-agent/install.sh" ] \
+        || [ ! -f "$root_dir/claude-code/install.sh" ] \
         || [ ! -f "$root_dir/lib/common.sh" ] \
         || [ ! -f "$root_dir/lib/crypto.sh" ] \
         || [ ! -f "$root_dir/lib/credentials.sh" ]; then
@@ -146,6 +147,7 @@ if [ ! -f "$INSTALL_DIR/maintenance/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/cliproxyapi/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/new-api/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/pi-coding-agent/install.sh" ] \
+    || [ ! -f "$INSTALL_DIR/claude-code/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/lib/common.sh" ] \
     || [ ! -f "$INSTALL_DIR/lib/crypto.sh" ] \
     || [ ! -f "$INSTALL_DIR/lib/credentials.sh" ]; then
@@ -695,6 +697,7 @@ readonly SVC_DOCKER="docker"
 readonly SVC_CLIPROXY="cliproxyapi"
 readonly SVC_NEWAPI="newapi"
 readonly SVC_PI="pi"
+readonly SVC_CLAUDECODE="claude-code"
 
 # Service definitions (order = dependency order)
 declare -A SVC_NAME SVC_DESC SVC_HINT SVC_SCRIPT SVC_DEPENDS
@@ -734,10 +737,16 @@ SVC_HINT[$SVC_PI]="500MB 磁盘"
 SVC_SCRIPT[$SVC_PI]="$INSTALL_DIR/pi-coding-agent/install.sh"
 SVC_DEPENDS[$SVC_PI]=""
 
+SVC_NAME[$SVC_CLAUDECODE]="Claude Code"
+SVC_DESC[$SVC_CLAUDECODE]="Anthropic 官方终端 AI 编程助手，可选配置自定义网关/模型"
+SVC_HINT[$SVC_CLAUDECODE]="500MB 磁盘"
+SVC_SCRIPT[$SVC_CLAUDECODE]="$INSTALL_DIR/claude-code/install.sh"
+SVC_DEPENDS[$SVC_CLAUDECODE]=""
+
 # Ordered list for display
 readonly ALL_SERVICES=(
     "$SVC_MAINTENANCE" "$SVC_NGINX" "$SVC_DOCKER"
-    "$SVC_CLIPROXY" "$SVC_NEWAPI" "$SVC_PI"
+    "$SVC_CLIPROXY" "$SVC_NEWAPI" "$SVC_PI" "$SVC_CLAUDECODE"
 )
 
 # Runtime state
@@ -829,6 +838,11 @@ detect_installed_services() {
                     ALREADY_INSTALLED[$svc]=true
                 fi
                 ;;
+            "$SVC_CLAUDECODE")
+                if command -v claude &>/dev/null; then
+                    ALREADY_INSTALLED[$svc]=true
+                fi
+                ;;
         esac
     done
 }
@@ -843,6 +857,7 @@ service_short_name() {
         "$SVC_CLIPROXY") echo "CliproxyAPI" ;;
         "$SVC_NEWAPI")   echo "New-API" ;;
         "$SVC_PI")       echo "Pi" ;;
+        "$SVC_CLAUDECODE") echo "Claude Code" ;;
         *)                echo "$1" ;;
     esac
 }
@@ -1026,6 +1041,10 @@ run_install() {
             "$SVC_PI")
                 extra_env+=("HAO_NO_PROMPT=1")
                 ;;
+            "$SVC_CLAUDECODE")
+                # HAO_CC_* 配置变量由 profile 导出后随环境继承，无需逐个转发。
+                extra_env+=("HAO_NO_PROMPT=1")
+                ;;
         esac
 
         # Component install.sh owns idempotency/repair/skip behavior.
@@ -1110,6 +1129,12 @@ print_summary() {
                 echo "    pi --help  |  pi -p \"你的问题\""
                 echo ""
                 ;;
+            "$SVC_CLAUDECODE")
+                echo "  Claude Code:"
+                echo "    claude --version  |  claude"
+                echo "    配置文件: ~/.claude/settings.json（修改后需重启 claude）"
+                echo ""
+                ;;
         esac
     done
 
@@ -1136,7 +1161,7 @@ AI-native server deployment and model operations toolkit
 
 通用参数:
   --profile FILE                  读取 .env 风格部署配置
-  --services LIST                 逗号分隔服务: maintenance,nginx,docker,cliproxyapi,new-api,pi
+  --services LIST                 逗号分隔服务: maintenance,nginx,docker,cliproxyapi,new-api,pi,claude-code
   --access-mode MODE              domain | ip | http
   --domain VALUE                  单个 Web 服务域名/IP
   --cliproxy-domain VALUE         CliproxyAPI 专用域名
@@ -1180,6 +1205,7 @@ normalize_service_id() {
         cliproxy|cliproxyapi|cpa|cli-proxy-api) echo "$SVC_CLIPROXY" ;;
         newapi|new-api) echo "$SVC_NEWAPI" ;;
         pi|pi-coding-agent|coding-agent) echo "$SVC_PI" ;;
+        claude-code|claudecode|claude|cc) echo "$SVC_CLAUDECODE" ;;
         *)
             echo "未知服务: $1" >&2
             return 1
@@ -1521,6 +1547,16 @@ print_cli_plan() {
                     echo "    database: $DB_TYPE"
                     echo "    image: $NEWAPI_IMAGE"
                     ;;
+                "$SVC_CLAUDECODE")
+                    echo "    gateway: ${HAO_CC_BASE_URL:-default (api.anthropic.com)}"
+                    echo "    model: ${HAO_CC_MODEL:-default}"
+                    if [ -n "${HAO_CC_AUTH_TOKEN:-}" ] || [ -n "${HAO_CC_TOKEN_FILE:-}" ]; then
+                        echo "    token: provided (hidden)"
+                    else
+                        echo "    token: not provided"
+                    fi
+                    echo "    settings_user: ${HAO_CC_USER:-${SUDO_USER:-root}}"
+                    ;;
             esac
         done
     fi
@@ -1606,6 +1642,15 @@ run_preflight_checks() {
         fi
     done
 
+    if [ "${TO_INSTALL[$SVC_CLAUDECODE]:-}" = "true" ] && [ -n "${HAO_CC_TOKEN_FILE:-}" ]; then
+        if [ -r "$HAO_CC_TOKEN_FILE" ]; then
+            report_check "ok" "Claude Code token file" "$HAO_CC_TOKEN_FILE"
+        else
+            report_check "fail" "Claude Code token file" "not readable: $HAO_CC_TOKEN_FILE"
+            failures=$((failures + 1))
+        fi
+    fi
+
     if needs_access_mode; then
         server_ip="$(detect_server_ip)"
         [ -n "$server_ip" ] && report_check "ok" "Detected server IP" "$server_ip" || report_check "warn" "Detected server IP" "not available"
@@ -1669,6 +1714,7 @@ print_cli_status() {
             "$SVC_CLIPROXY")    echo "$(compose_running_text /opt/docker-services/cliproxyapi)" ;;
             "$SVC_NEWAPI")      echo "$(compose_running_text /opt/docker-services/new-api)" ;;
             "$SVC_PI")          echo "$(command -v pi 2>/dev/null || echo unavailable)" ;;
+            "$SVC_CLAUDECODE")  echo "$(command -v claude 2>/dev/null || echo unavailable)" ;;
         esac
     done
 }
