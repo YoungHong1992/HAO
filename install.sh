@@ -4,7 +4,7 @@
 ################################################################################
 #
 # HAO（HongAgentOps）— AI-native deterministic deployment executor
-# 版本: v4.0.0
+# 发布标识: YYMMDD-<git-short-hash>（正式发布）或 dev-<git-short-hash>（源码工作树）
 #
 # 功能说明：
 #   通过 plan/preflight/apply/status/doctor 命令部署 AI 工具栈和模型服务
@@ -32,13 +32,54 @@
 
 set -euo pipefail
 
-# ==================== 版本与仓库信息 ====================
-readonly VERSION="4.0.0"
+# ==================== 发布标识与仓库信息 ====================
 readonly HAO_REPO_SLUG="${HAO_REPO_SLUG:-YoungHong1992/hao}"
+
+resolve_release_id() {
+    local script_dir release_file exact_tag short_hash
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || pwd)"
+    release_file="$script_dir/RELEASE"
+
+    if [[ "${HAO_RELEASE:-}" =~ ^[0-9]{6}-[0-9a-f]{7,12}$ ]]; then
+        printf '%s' "$HAO_RELEASE"
+        return
+    fi
+    if [ -r "$release_file" ]; then
+        read -r exact_tag < "$release_file"
+        if [[ "$exact_tag" =~ ^[0-9]{6}-[0-9a-f]{7,12}$ ]]; then
+            printf '%s' "$exact_tag"
+            return
+        fi
+    fi
+    if [[ "${HAO_REF:-}" =~ ^[0-9]{6}-[0-9a-f]{7,12}$ ]]; then
+        printf '%s' "$HAO_REF"
+        return
+    fi
+    if command -v git >/dev/null 2>&1 && git -C "$script_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        exact_tag="$(git -C "$script_dir" tag --points-at HEAD 2>/dev/null | grep -E '^[0-9]{6}-[0-9a-f]{7,12}$' | head -1 || true)"
+        if [ -n "$exact_tag" ]; then
+            printf '%s' "$exact_tag"
+            return
+        fi
+        short_hash="$(git -C "$script_dir" rev-parse --short=7 HEAD 2>/dev/null || true)"
+        if [[ "$short_hash" =~ ^[0-9a-f]{7}$ ]]; then
+            printf 'dev-%s' "$short_hash"
+            return
+        fi
+    fi
+    printf 'dev-unknown'
+}
+
+RELEASE_ID="$(resolve_release_id)"
+readonly RELEASE_ID
+readonly VERSION="$RELEASE_ID"
+export HAO_RELEASE="$RELEASE_ID"
+IMAGE_CANDIDATES_FILE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || pwd)/config/image-candidates.tsv"
+readonly IMAGE_CANDIDATES_FILE
 
 show_bootstrap_help() {
     cat <<EOF
-HAO v${VERSION} — HongAgentOps
+HAO ${RELEASE_ID} — HongAgentOps
 AI-native server deployment and model operations toolkit
 
 用法:
@@ -47,6 +88,7 @@ AI-native server deployment and model operations toolkit
   sudo ./hao apply --profile deploy.env --yes
   ./hao status
   ./hao doctor --profile deploy.env
+  ./hao inventory
   ./hao -h
   ./hao --version
 
@@ -63,7 +105,7 @@ EOF
 for arg in "$@"; do
     case "$arg" in
         -h|--help) show_bootstrap_help; exit 0 ;;
-        --version) echo "v${VERSION}"; exit 0 ;;
+        --version) echo "${RELEASE_ID}"; exit 0 ;;
     esac
 done
 
@@ -89,7 +131,7 @@ bootstrap_full_repo() {
     tmp_dir="$(mktemp -d)"
     archive_file="$tmp_dir/hao.tar.gz"
 
-    if [[ "$ref" == v* ]]; then
+    if [[ "$ref" =~ ^[0-9]{6}-[0-9a-f]{7,12}$ ]]; then
         archive_url="https://github.com/${HAO_REPO_SLUG}/archive/refs/tags/${ref}.tar.gz"
     else
         archive_url="https://github.com/${HAO_REPO_SLUG}/archive/refs/heads/${ref}.tar.gz"
@@ -119,7 +161,9 @@ bootstrap_full_repo() {
         || [ ! -f "$root_dir/claude-code/install.sh" ] \
         || [ ! -f "$root_dir/lib/common.sh" ] \
         || [ ! -f "$root_dir/lib/crypto.sh" ] \
-        || [ ! -f "$root_dir/lib/credentials.sh" ]; then
+        || [ ! -f "$root_dir/lib/credentials.sh" ] \
+        || [ ! -f "$root_dir/lib/state.sh" ] \
+        || [ ! -f "$root_dir/config/image-candidates.tsv" ]; then
         echo "[ERROR] 下载的安装包不完整。" >&2
         rm -rf "$tmp_dir"
         exit 1
@@ -150,9 +194,14 @@ if [ ! -f "$INSTALL_DIR/maintenance/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/claude-code/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/lib/common.sh" ] \
     || [ ! -f "$INSTALL_DIR/lib/crypto.sh" ] \
-    || [ ! -f "$INSTALL_DIR/lib/credentials.sh" ]; then
+    || [ ! -f "$INSTALL_DIR/lib/credentials.sh" ] \
+    || [ ! -f "$INSTALL_DIR/lib/state.sh" ] \
+    || [ ! -f "$INSTALL_DIR/config/image-candidates.tsv" ]; then
     bootstrap_full_repo "$@"
 fi
+
+# shellcheck source=lib/state.sh
+source "$INSTALL_DIR/lib/state.sh"
 
 # ==================== 自包含公共函数 ====================
 # 本脚本可独立运行，不依赖外部公共库。
@@ -167,7 +216,7 @@ WHITE='\033[1;37m'
 NC='\033[0m'
 BOLD='\033[1m'
 DIM='\033[2m'
-readonly COMMON_VERSION="4.0.0"
+readonly COMMON_VERSION="$RELEASE_ID"
 readonly DEPLOY_LOG_DIR="/var/log/vps-deploy"
 
 print_header() {
@@ -178,7 +227,7 @@ print_header() {
     echo "║                                                              ║"
     printf  "║           %-51s║\n" "$title"
     echo "║                                                              ║"
-    printf  "║               版本: v%-40s║\n" "${COMMON_VERSION}"
+    printf  "║           发布标识: %-40s║\n" "${COMMON_VERSION}"
     echo "║                                                              ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -236,8 +285,9 @@ check_root() {
 }
 
 detect_os() {
-    if [ -f /etc/os-release ]; then
-        awk -F= '$1 == "ID" { gsub(/"/, "", $2); print $2; exit }' /etc/os-release
+    local os_release_file="${HAO_OS_RELEASE_FILE:-/etc/os-release}"
+    if [ -f "$os_release_file" ]; then
+        awk -F= '$1 == "ID" { gsub(/"/, "", $2); print $2; exit }' "$os_release_file"
     elif [ -f /etc/redhat-release ]; then
         echo "rhel"
     else
@@ -246,11 +296,33 @@ detect_os() {
 }
 
 detect_os_version() {
-    if [ -f /etc/os-release ]; then
-        awk -F= '$1 == "VERSION_CODENAME" { gsub(/"/, "", $2); print $2; exit }' /etc/os-release
+    local os_release_file="${HAO_OS_RELEASE_FILE:-/etc/os-release}"
+    if [ -f "$os_release_file" ]; then
+        awk -F= '$1 == "VERSION_CODENAME" { gsub(/"/, "", $2); print $2; exit }' "$os_release_file"
     else
         echo "unknown"
     fi
+}
+
+detect_os_version_id() {
+    local os_release_file="${HAO_OS_RELEASE_FILE:-/etc/os-release}"
+    if [ -f "$os_release_file" ]; then
+        awk -F= '$1 == "VERSION_ID" { gsub(/"/, "", $2); print $2; exit }' "$os_release_file"
+    else
+        echo "unknown"
+    fi
+}
+
+is_supported_os_release() {
+    local os="$1" version="$2"
+    case "$os:$version" in
+        debian:12|debian:13|ubuntu:22.04|ubuntu:24.04|ubuntu:26.04) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+supported_os_summary() {
+    echo "Debian 13/12; Ubuntu 26.04/24.04/22.04 LTS"
 }
 
 detect_server_ip() {
@@ -621,6 +693,18 @@ validate_port() {
     return 0
 }
 
+validate_container_image() {
+    local image="$1"
+    if [[ ! "$image" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ ]] \
+        || [[ "$image" == *..* ]] \
+        || [[ "$image" == */ ]] \
+        || [[ "$image" == *: ]]; then
+        log_error "Docker 镜像引用格式不安全或无效: $image"
+        return 1
+    fi
+    return 0
+}
+
 validate_sni() {
     local sni="$1"
     validate_domain "$sni"
@@ -637,7 +721,7 @@ escape_double_quoted() {
 # ==================== 帮助信息 ====================
 show_help() {
     cat <<EOF
-HAO v${VERSION} — HongAgentOps
+HAO ${RELEASE_ID} — HongAgentOps
 AI-native server deployment and model operations toolkit
 
 用法:
@@ -646,6 +730,7 @@ AI-native server deployment and model operations toolkit
   sudo ./hao apply --profile deploy.env --yes
   ./hao status
   ./hao doctor --profile deploy.env
+  ./hao inventory
   ./hao -h
   ./hao --version
 
@@ -676,12 +761,12 @@ EOF
 
 # ==================== 参数解析 ====================
 case "${1:-}" in
-    plan|preflight|apply|status|doctor|help) ;;
+    plan|preflight|apply|status|doctor|inventory|help) ;;
     *)
         for arg in "$@"; do
             case "$arg" in
                 -h|--help)    show_help ;;
-                --version)    echo "v${VERSION}"; exit 0 ;;
+                --version)    echo "${RELEASE_ID}"; exit 0 ;;
                 -*)           echo "未知参数: $arg"; echo "使用 -h 查看帮助"; exit 1 ;;
             esac
         done
@@ -972,6 +1057,94 @@ needs_access_mode() {
 
 # ==================== 安装执行 ====================
 
+record_service_management_state() {
+    local svc="$1" path domain_value binary
+    local -a candidates=() resources=()
+
+    case "$svc" in
+        "$SVC_MAINTENANCE")
+            candidates+=(
+                "auto:/var/lib/hao/maintenance.installed"
+                "auto:/etc/fail2ban/jail.d/hao-sshd.local"
+                "auto:/etc/sysctl.d/99-hao-swap.conf"
+                "auto:/etc/systemd/journald.conf.d/hao.conf"
+                "shared:/etc/docker/daemon.json"
+                "shared:/etc/fstab"
+            )
+            ;;
+        "$SVC_NGINX")
+            candidates+=(
+                "auto:/etc/nginx/nginx.conf"
+                "auto:/etc/sysctl.d/99-vps-optimize.conf"
+                "auto:/etc/systemd/system/nginx.service.d/limits.conf"
+                "auto:/etc/apt/preferences.d/99nginx"
+                "auto:/etc/apt/sources.list.d/nginx.list"
+                "auto:/etc/security/limits.d/90-hao-nofile.conf"
+            )
+            binary="$(command -v nginx 2>/dev/null || true)"
+            [ -n "$binary" ] && candidates+=("observed:$binary")
+            ;;
+        "$SVC_DOCKER")
+            candidates+=(
+                "auto:/etc/apt/sources.list.d/docker.list"
+                "observed:/etc/apt/keyrings/docker.gpg"
+                "shared:/etc/docker/daemon.json"
+            )
+            binary="$(command -v docker 2>/dev/null || true)"
+            [ -n "$binary" ] && candidates+=("observed:$binary")
+            ;;
+        "$SVC_CLIPROXY")
+            if [ "$CLIPROXY_DEPLOY_MODE" = "docker" ]; then
+                candidates+=(
+                    "auto:/opt/docker-services/cliproxyapi/docker-compose.yml"
+                    "secret:/opt/docker-services/cliproxyapi/config.yaml"
+                    "secret:/opt/docker-services/cliproxyapi/hao-credentials.txt"
+                )
+            else
+                candidates+=(
+                    "secret:/etc/cliproxyapi/config.yaml"
+                    "auto:/etc/systemd/system/cliproxyapi.service"
+                    "secret:/opt/cliproxyapi/hao-credentials.txt"
+                )
+            fi
+            domain_value="${SERVICE_DOMAIN[$svc]:-}"
+            [ -n "$domain_value" ] && candidates+=("auto:/etc/nginx/conf.d/${domain_value}.conf")
+            ;;
+        "$SVC_NEWAPI")
+            candidates+=(
+                "auto:/opt/docker-services/new-api/docker-compose.yml"
+                "secret:/opt/docker-services/new-api/hao-credentials.txt"
+            )
+            domain_value="${SERVICE_DOMAIN[$svc]:-}"
+            [ -n "$domain_value" ] && candidates+=("auto:/etc/nginx/conf.d/${domain_value}.conf")
+            ;;
+        "$SVC_PI")
+            binary="$(command -v pi 2>/dev/null || true)"
+            [ -n "$binary" ] && candidates+=("managed:$binary")
+            ;;
+        "$SVC_CLAUDECODE")
+            binary="$(command -v claude 2>/dev/null || true)"
+            [ -n "$binary" ] && candidates+=("managed:$binary")
+            ;;
+    esac
+
+    for path in "${candidates[@]}"; do
+        local ownership="${path%%:*}"
+        local resource_path="${path#*:}"
+        [ -e "$resource_path" ] || continue
+        if [ "$ownership" = "auto" ]; then
+            if hao_file_is_managed "$resource_path"; then
+                ownership="managed"
+            else
+                ownership="observed"
+            fi
+        fi
+        resources+=("$ownership:$resource_path")
+    done
+
+    hao_record_service "$svc" success "$RELEASE_ID" "${resources[@]}"
+}
+
 run_install() {
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
@@ -1055,6 +1228,12 @@ run_install() {
             log_success "$name 安装成功"
             INSTALL_RESULTS+=("✓ $name")
             ALREADY_INSTALLED[$svc]=true
+            if ! record_service_management_state "$svc"; then
+                log_error "$name 已安装，但 HAO 管理状态记录失败"
+                INSTALL_RESULTS+=("✗ $name — 管理状态记录失败")
+                INSTALL_FAILED[$svc]=true
+                FAILED=1
+            fi
         else
             log_error "$name 安装失败"
             INSTALL_RESULTS+=("✗ $name — 失败")
@@ -1140,7 +1319,7 @@ print_summary() {
 
     print_divider
     echo ""
-    echo -e "${CYAN}感谢使用 HAO（HongAgentOps）v${VERSION}！${NC}"
+    echo -e "${CYAN}感谢使用 HAO（HongAgentOps）${RELEASE_ID}！${NC}"
     echo -e "${DIM}日志文件: $DEPLOY_LOG_FILE${NC}"
     echo ""
 }
@@ -1149,7 +1328,7 @@ print_summary() {
 
 cli_usage() {
     cat <<EOF
-HAO v${VERSION} — HongAgentOps
+HAO ${RELEASE_ID} — HongAgentOps
 AI-native server deployment and model operations toolkit
 
 用法:
@@ -1158,6 +1337,7 @@ AI-native server deployment and model operations toolkit
   sudo ./hao apply --profile deploy.env --yes
   ./hao status [--services all|new-api,cliproxyapi]
   ./hao doctor [--profile deploy.env]
+  ./hao inventory
 
 通用参数:
   --profile FILE                  读取 .env 风格部署配置
@@ -1181,7 +1361,7 @@ Profile 示例:
   HAO_CONFIRM_APPLY="yes"
 
 说明:
-  plan/preflight/status/doctor 不执行安装。apply 只接受明确参数或 profile，
+  plan/preflight/status/doctor/inventory 不执行安装。apply 只接受明确参数或 profile，
   并且需要 --yes 或 HAO_CONFIRM_APPLY=yes 才会真正修改系统。
 EOF
 }
@@ -1219,6 +1399,19 @@ service_env_prefix() {
         "$SVC_NEWAPI")   echo "NEWAPI" ;;
         *)               echo "" ;;
     esac
+}
+
+print_image_candidates() {
+    local service="$1" row catalog_service default_image candidate_one candidate_two maturity checked_at
+    [ -r "$IMAGE_CANDIDATES_FILE" ] || return 0
+    row="$(awk -F '\t' -v service="$service" '$1 == service { print; exit }' "$IMAGE_CANDIDATES_FILE")"
+    [ -n "$row" ] || return 0
+    IFS=$'\t' read -r catalog_service default_image candidate_one candidate_two maturity checked_at <<< "$row"
+    echo "    image_candidates:"
+    echo "      - $default_image (rolling default)"
+    echo "      - $candidate_one ($maturity)"
+    echo "      - $candidate_two ($maturity)"
+    echo "    candidates_checked: $checked_at"
 }
 
 load_profile_file() {
@@ -1437,6 +1630,8 @@ validate_cli_config() {
         echo "[ERROR] Docker 镜像名称不能为空。" >&2
         exit 1
     fi
+    validate_container_image "$CLIPROXY_IMAGE" >/dev/null || exit 1
+    validate_container_image "$NEWAPI_IMAGE" >/dev/null || exit 1
 
     if [ "${TO_INSTALL[$SVC_CLIPROXY]:-}" = "true" ] && [ -n "$CLI_CLIPROXY_DOMAIN" ]; then
         SERVICE_DOMAIN[$SVC_CLIPROXY]="$CLI_CLIPROXY_DOMAIN"
@@ -1504,7 +1699,7 @@ print_cli_plan() {
     local svc dep domain_value
 
     echo "HAO deployment plan"
-    echo "Version: v${VERSION}"
+    echo "Release: ${RELEASE_ID}"
     echo "Profile: ${CLI_PROFILE:-inline arguments/env}"
     echo ""
     echo "Requested services:"
@@ -1536,6 +1731,7 @@ print_cli_plan() {
                     echo "    deploy_mode: $CLIPROXY_DEPLOY_MODE"
                     if [ "$CLIPROXY_DEPLOY_MODE" = "docker" ]; then
                         echo "    image: $CLIPROXY_IMAGE"
+                        print_image_candidates "cliproxyapi"
                     fi
                     if [ -n "$ADMIN_PASSWORD" ]; then
                         echo "    admin_password: provided (hidden)"
@@ -1546,6 +1742,7 @@ print_cli_plan() {
                 "$SVC_NEWAPI")
                     echo "    database: $DB_TYPE"
                     echo "    image: $NEWAPI_IMAGE"
+                    print_image_candidates "new-api"
                     ;;
                 "$SVC_CLAUDECODE")
                     echo "    gateway: ${HAO_CC_BASE_URL:-default (api.anthropic.com)}"
@@ -1565,6 +1762,7 @@ print_cli_plan() {
     echo "System changes expected:"
     echo "  - May install OS packages and enable systemd services"
     echo "  - May write files under /opt, /etc/nginx, /etc/docker, /var/log/vps-deploy, /var/lib/hao"
+    echo "  - Records HAO ownership and resource hashes in /var/lib/hao/manifest.json"
     echo "  - Nginx configs are backed up before overwrite where supported"
     echo "  - Secret values are written to credential files and are not printed"
 }
@@ -1580,22 +1778,20 @@ report_check() {
 
 run_preflight_checks() {
     local failures=0 warnings=0 svc domain_value server_ip resolved_ips required
-    local os arch
+    local os os_version arch
 
     os="$(detect_os)"
+    os_version="$(detect_os_version_id)"
     arch="$(detect_arch)"
     echo "HAO preflight"
     echo ""
 
-    case "$os" in
-        debian|ubuntu)
-            report_check "ok" "OS" "$os"
-            ;;
-        *)
-            report_check "fail" "OS" "$os is not a supported target"
-            failures=$((failures + 1))
-            ;;
-    esac
+    if is_supported_os_release "$os" "$os_version"; then
+        report_check "ok" "OS" "$os $os_version (supported)"
+    else
+        report_check "fail" "OS" "$os $os_version; supported: $(supported_os_summary)"
+        failures=$((failures + 1))
+    fi
 
     case "$arch" in
         linux_amd64|linux_arm64) report_check "ok" "Architecture" "$arch" ;;
@@ -1695,18 +1891,19 @@ run_preflight_checks() {
 }
 
 print_cli_status() {
-    local svc selected_filter="$1"
+    local svc selected_filter="$1" ownership
 
     detect_installed_services
     echo "HAO status"
     echo ""
-    printf '%-16s %-10s %s\n' "Service" "Installed" "Details"
-    printf '%-16s %-10s %s\n' "-------" "---------" "-------"
+    printf '%-16s %-10s %-10s %s\n' "Service" "Installed" "Ownership" "Details"
+    printf '%-16s %-10s %-10s %s\n' "-------" "---------" "---------" "-------"
     for svc in "${ALL_SERVICES[@]}"; do
         if [ -n "$selected_filter" ] && [ "$selected_filter" != "all" ] && ! [[ ",$selected_filter," == *",$svc,"* ]]; then
             continue
         fi
-        printf '%-16s %-10s ' "$(service_short_name "$svc")" "${ALREADY_INSTALLED[$svc]:-false}"
+        ownership="$(hao_service_ownership "$svc")"
+        printf '%-16s %-10s %-10s ' "$(service_short_name "$svc")" "${ALREADY_INSTALLED[$svc]:-false}" "$ownership"
         case "$svc" in
             "$SVC_MAINTENANCE") echo "marker: $([ -f /var/lib/hao/maintenance.installed ] && echo present || echo missing)" ;;
             "$SVC_NGINX")       echo "$(nginx -v 2>&1 | sed 's/^nginx version: //' || echo unavailable)" ;;
@@ -1717,6 +1914,14 @@ print_cli_status() {
             "$SVC_CLAUDECODE")  echo "$(command -v claude 2>/dev/null || echo unavailable)" ;;
         esac
     done
+}
+
+print_hao_inventory() {
+    if [ -r "$HAO_STATE_DIR/manifest.json" ]; then
+        cat "$HAO_STATE_DIR/manifest.json"
+    else
+        echo "No HAO inventory found at $HAO_STATE_DIR/manifest.json"
+    fi
 }
 
 run_cli_command() {
@@ -1781,12 +1986,20 @@ run_cli_command() {
             parse_cli_args "$command" "$@"
             if [ -z "${CLI_SERVICES:-}" ]; then
                 print_cli_status "all"
-                exit 0
+                echo ""
+                hao_print_drift_report
+                exit $?
             fi
             prepare_cli_plan "$command" "$@"
             print_cli_status "all"
             echo ""
             run_preflight_checks
+            echo ""
+            hao_print_drift_report
+            ;;
+        inventory)
+            parse_cli_args "$command" "$@"
+            print_hao_inventory
             ;;
         *)
             echo "[ERROR] 未知命令: $command" >&2
@@ -1798,7 +2011,7 @@ run_cli_command() {
 
 # ==================== 执行 ====================
 case "${1:-}" in
-    plan|preflight|apply|status|doctor|help)
+    plan|preflight|apply|status|doctor|inventory|help)
         run_cli_command "$@"
         ;;
     *)

@@ -4,7 +4,7 @@
 ################################################################################
 #
 # Nginx 安装与系统优化脚本
-# 版本: v4.0.0
+# 发布标识由 HAO_RELEASE 提供
 #
 # 功能说明：
 #   1. 系统内核优化：开启 BBR、优化 TCP 连接、提升文件描述符限制
@@ -12,7 +12,7 @@
 #   3. 配置高并发优化
 #
 # 适用环境：
-#   - Ubuntu 20.04+ / Debian 11+
+#   - HAO 正式支持矩阵：Ubuntu 26.04/24.04/22.04 LTS，Debian 13/12
 #
 # 使用方法：
 #   chmod +x install.sh
@@ -36,7 +36,7 @@ WHITE='\033[1;37m'
 NC='\033[0m'
 BOLD='\033[1m'
 DIM='\033[2m'
-readonly COMMON_VERSION="4.0.0"
+readonly COMMON_VERSION="${HAO_RELEASE:-dev-standalone}"
 readonly DEPLOY_LOG_DIR="/var/log/vps-deploy"
 
 print_header() {
@@ -47,7 +47,7 @@ print_header() {
     echo "║                                                              ║"
     printf  "║           %-51s║\n" "$title"
     echo "║                                                              ║"
-    printf  "║               版本: v%-40s║\n" "${COMMON_VERSION}"
+    printf  "║           发布标识: %-40s║\n" "${COMMON_VERSION}"
     echo "║                                                              ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -626,7 +626,7 @@ Nginx 安装与系统优化脚本
   - 从 nginx.org 官方主线仓库安装 Nginx (含 HTTP/3)
   - 配置高并发优化
 
-支持系统: Ubuntu 20.04+, Debian 11+
+支持系统: Ubuntu 26.04/24.04/22.04 LTS, Debian 13/12
 EOF
     exit 0
 }
@@ -664,6 +664,8 @@ configure_systemd_limits() {
     local override_dir="/etc/systemd/system/nginx.service.d"
     mkdir -p "$override_dir"
     cat > "$override_dir/limits.conf" <<'SYSTEMD_EOF'
+# Managed by HAO
+# Service: nginx
 [Service]
 LimitNOFILE=65535
 SYSTEMD_EOF
@@ -743,6 +745,8 @@ log_step "[1/3] 系统环境检查与优化..."
 # 1. 内核参数优化 (开启 BBR + TCP 调优)
 log_info "优化 sysctl.conf..."
 cat > /etc/sysctl.d/99-vps-optimize.conf <<'SYSCTL_EOF'
+# Managed by HAO
+# Service: nginx
 # --- BBR 拥塞控制 ---
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
@@ -775,15 +779,16 @@ else
     log_warning "BBR 开启失败，请检查内核版本 (建议 >= 4.9)"
 fi
 
-# 2. 提升系统级文件描述符限制
-if ! grep -q "soft nofile 65535" /etc/security/limits.conf 2>/dev/null; then
-    {
-        echo "* soft nofile 65535"
-        echo "* hard nofile 65535"
-        echo "root soft nofile 65535"
-        echo "root hard nofile 65535"
-    } >> /etc/security/limits.conf
-fi
+# 2. 使用独立 drop-in 提升文件描述符限制，不修改系统主配置。
+mkdir -p /etc/security/limits.d
+cat > /etc/security/limits.d/90-hao-nofile.conf <<'LIMITS_EOF'
+# Managed by HAO
+# Service: nginx
+* soft nofile 65535
+* hard nofile 65535
+root soft nofile 65535
+root hard nofile 65535
+LIMITS_EOF
 
 # 3. systemd 文件描述符限制会在 Nginx 安装后写入服务 override
 
@@ -807,11 +812,14 @@ if [ -f /etc/debian_version ]; then
         VERSION_CODENAME=$(lsb_release -cs 2>/dev/null || echo "bookworm")
     fi
     echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] \
-http://nginx.org/packages/mainline/${ID}/ ${VERSION_CODENAME} nginx" \
+	http://nginx.org/packages/mainline/${ID}/ ${VERSION_CODENAME} nginx" \
+        | { printf '# Managed by HAO\n# Service: nginx\n'; cat; } \
         > /etc/apt/sources.list.d/nginx.list
 
     # 优先使用 nginx.org 仓库
     cat > /etc/apt/preferences.d/99nginx <<'APT_PREF_EOF'
+# Managed by HAO
+# Service: nginx
 Package: nginx*
 Pin: origin nginx.org
 Pin-Priority: 900
@@ -824,7 +832,7 @@ APT_PREF_EOF
 
 elif [ -f /etc/redhat-release ]; then
     log_error "CentOS / RHEL 不在本脚本的支持范围内。"
-    log_info "请使用 Ubuntu 20.04+ 或 Debian 11+。"
+    log_info "请使用 Ubuntu 26.04/24.04/22.04 LTS 或 Debian 13/12。"
     log_info "对于 RHEL 系列，请参考 nginx.org 官方文档手动安装。"
     exit 1
 else
@@ -857,6 +865,9 @@ prepare_nginx_directories
 
 # 生成 nginx.conf（高并发调优 + 模块化站点配置）
 cat > "$NGINX_CONF_DIR/nginx.conf" <<NGINX_EOF
+# Managed by HAO
+# Service: nginx
+# Release: ${COMMON_VERSION}
 user  $NGINX_USER;
 worker_processes  auto;
 worker_rlimit_nofile 65535;
@@ -918,7 +929,7 @@ echo ""
 echo -e "${GREEN}==============================================${NC}"
 echo -e "${GREEN}   Nginx 安装与系统优化完成${NC}"
 echo -e "${GREEN}==============================================${NC}"
-echo -e "版本:         ${GREEN}v${COMMON_VERSION}${NC}"
+echo -e "发布标识:     ${GREEN}${COMMON_VERSION}${NC}"
 echo -e "Nginx 版本:   ${YELLOW}$NGINX_VERSION${NC}"
 echo -e "安装来源:     ${YELLOW}nginx.org 官方主线仓库${NC}"
 echo -e "配置文件:     ${YELLOW}/etc/nginx/nginx.conf${NC}"

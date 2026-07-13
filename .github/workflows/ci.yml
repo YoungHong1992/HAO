@@ -18,23 +18,5 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck
 
-      - name: Bash syntax check
-        run: |
-          find . -path ./.git -prune -o -name '*.sh' -print0 \
-            | xargs -0 -n1 bash -n
-
-      - name: ShellCheck
-        run: |
-          find . -path ./.git -prune -o -name '*.sh' -print0 \
-            | xargs -0 shellcheck -x -S warning
-
-      - name: Smoke tests
-        run: |
-          ./install.sh --version
-          ./install.sh -h >/dev/null
-
-      - name: Repository tests
-        run: |
-          ./tests/test-common-crypto.sh
-          ./tests/test-credentials.sh
-          ./tests/test-hidden-modules.sh
+      - name: Repository test suite
+        run: ./tests/run.sh

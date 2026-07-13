@@ -1,91 +1,108 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit, branch, or tag to release
+        required: true
+        default: main
+        type: string
+      acceptance_evidence:
+        description: URL or identifier for the completed real-VM acceptance record
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
   release:
-    name: Create GitHub Release
+    name: Build date-hash release
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
 
-      - name: Generate version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Run release gate
+        run: ./tests/run.sh
+
+      - name: Verify release commit belongs to main
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
+
+      - name: Verify reviewed image candidates
+        run: |
+          set -euo pipefail
+          today="$(date -u +%Y-%m-%d)"
+          while IFS=$'\t' read -r service default_image candidate_one candidate_two maturity checked_at; do
+            [[ "$service" == \#* || -z "$service" ]] && continue
+            if [ "$checked_at" != "$today" ]; then
+              echo "Image candidates for $service were reviewed on $checked_at, expected $today" >&2
+              exit 1
+            fi
+            for image in "$default_image" "$candidate_one" "$candidate_two"; do
+              docker manifest inspect "$image" >/dev/null
+            done
+            echo "$service: $maturity candidates verified"
+          done < config/image-candidates.tsv
+
+      - name: Generate immutable release identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACCEPTANCE_EVIDENCE: ${{ inputs.acceptance_evidence }}
+        run: |
+          set -euo pipefail
+          short_sha="$(git rev-parse --short=7 HEAD)"
+          release_id="$(date -u +%y%m%d)-${short_sha}"
+          if ! [[ "$release_id" =~ ^[0-9]{6}-[0-9a-f]{7}$ ]]; then
+            echo "Invalid release id: $release_id" >&2
+            exit 1
+          fi
+          if gh release view "$release_id" >/dev/null 2>&1 || git rev-parse "refs/tags/$release_id" >/dev/null 2>&1; then
+            echo "Release already exists and will not be overwritten: $release_id" >&2
+            exit 1
+          fi
+          printf '%s\n' "$release_id" > RELEASE
+          jq -n \
+            --arg release "$release_id" \
+            --arg commit "$(git rev-parse HEAD)" \
+            --arg built_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg acceptance_evidence "$ACCEPTANCE_EVIDENCE" \
+            '{release: $release, commit: $commit, built_at: $built_at, acceptance_evidence: $acceptance_evidence}' > build-info.json
+          echo "RELEASE_ID=$release_id" >> "$GITHUB_ENV"
 
       - name: Bundle project
         run: |
+          set -euo pipefail
           mkdir -p dist/hao
-          cp -a hao install.sh lib maintenance nginx docker cliproxyapi new-api pi-coding-agent claude-code README.md AGENTS.md docs skills LICENSE dist/hao/
+          cp -a hao install.sh lib maintenance nginx docker cliproxyapi new-api pi-coding-agent claude-code README.md AGENTS.md docs skills config LICENSE RELEASE build-info.json dist/hao/
           tar czf hao.tar.gz -C dist hao
           sha256sum hao.tar.gz > checksums.txt
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: "HongAgentOps ${{ github.ref_name }}"
-          body: |
-            ## HAO（HongAgentOps）${{ github.ref_name }}
+      - name: Verify bundled identity
+        run: |
+          set -euo pipefail
+          test "$(tar -xOf hao.tar.gz hao/RELEASE)" = "$RELEASE_ID"
+          test "$(tar -xOf hao.tar.gz hao/build-info.json | jq -r .commit)" = "$(git rev-parse HEAD)"
 
-            ### 方式一：AI 协作部署（推荐）
-
-            ```bash
-            curl -fsSLO https://github.com/YoungHong1992/hao/releases/latest/download/hao.tar.gz
-            tar xzf hao.tar.gz
-            cd hao
-            ./hao plan --services new-api --domain api.example.com
-            ./hao preflight --services new-api --domain api.example.com
-            sudo ./hao apply --services new-api --domain api.example.com --yes
-            ```
-
-            > 建议先由 AI agent 和用户确认服务、域名、数据库、风险项，再执行 apply。
-
-            ### 方式二：Profile 部署
-
-            ```bash
-            curl -fsSLO https://github.com/YoungHong1992/hao/releases/latest/download/hao.tar.gz
-            tar xzf hao.tar.gz
-            cd hao
-            cat > deploy.env <<'EOF'
-            HAO_SERVICES="maintenance,nginx,docker,new-api"
-            HAO_ACCESS_MODE="domain"
-            HAO_NEWAPI_DOMAIN="api.example.com"
-            HAO_DB_TYPE="postgresql"
-            EOF
-            ./hao plan --profile deploy.env
-            ./hao preflight --profile deploy.env
-            sudo ./hao apply --profile deploy.env --yes
-            ```
-
-            ### 方式三：远程入口
-
-            ```bash
-            curl -fsSL https://raw.githubusercontent.com/YoungHong1992/hao/${{ github.ref_name }}/install.sh | env HAO_REF=${{ github.ref_name }} bash
-            ```
-
-            > 无参数运行只显示帮助，不进入终端菜单。请使用 release 包或完整仓库中的 `hao plan/preflight/apply/status/doctor`。
-
-            ### 可选组件
-
-            | 组件 | 描述 | 资源需求 |
-            |------|------|----------|
-            | Maintenance | fail2ban / swap / journald 限制 / Docker 日志轮转 | 基础维护 |
-            | Nginx (HTTP/3) | 高性能 Web 服务器 + 反向代理 | 512MB 内存 |
-            | Docker | Docker Engine + Compose 插件 | 无额外需求 |
-            | CliproxyAPI | 轻量 AI API 转发代理，默认 Docker Compose，可选裸机 | 256MB 内存 |
-            | New-API | AI 模型网关与资产管理系统 | ≥ 1GB 内存 |
-            | Pi | 终端 AI 编程助手 | 500MB 磁盘 |
-
-          files: |
-            hao.tar.gz
-            checksums.txt
-          draft: false
-          prerelease: false
+      - name: Create GitHub Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_ID" hao.tar.gz checksums.txt \
+            --target "$(git rev-parse HEAD)" \
+            --title "HongAgentOps $RELEASE_ID" \
+            --generate-notes \
+            --latest

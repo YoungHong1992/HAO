@@ -16,5 +16,9 @@ Thumbs.db
 *.log
 /var/log/vps-deploy/
 
+# Generated release metadata (included in release archives only)
+/RELEASE
+/build-info.json
+
 # ShellCheck
 *.shellcheck

@@ -1,7 +1,7 @@
 # HAO（HongAgentOps）— AI-native server deployment toolkit
 
-> **版本**: v4.0.0
-> **更新日期**: 2026-07-07
+> **发布标识**: 正式发布使用 `YYMMDD-<git-short-hash>`，例如 `260713-abcdef0`
+> **更新日期**: 2026-07-13
 > **许可证**: MIT
 
 HongAgentOps 是洪哥出品的 AI 原生服务器部署工具。它把传统终端菜单改造成适合 AI agents 调用的 `plan → preflight → apply → status/doctor` 工作流：人负责在对话里确认目标和风险，AI 负责生成部署 profile、检查环境、执行明确的参数化命令。
@@ -39,6 +39,7 @@ EOF
 ./hao plan --profile deploy.env
 ./hao preflight --profile deploy.env
 sudo ./hao apply --profile deploy.env --yes
+./hao inventory
 ```
 
 > 建议由 AI agent 先和你确认服务、域名、数据库、风险项，再生成 `deploy.env`。`apply` 必须显式传入 `--yes` 或设置 `HAO_CONFIRM_APPLY=yes` 才会修改系统。
@@ -51,6 +52,18 @@ tar xzf hao.tar.gz
 cd hao
 ./hao plan --services new-api --domain api.example.com
 ```
+
+生产环境建议固定发布标识，避免 `latest` 随后变化：
+
+```bash
+HAO_RELEASE="260713-abcdef0" # 替换为实际发布标识
+curl -fsSLo hao.tar.gz "https://github.com/YoungHong1992/hao/releases/download/${HAO_RELEASE}/hao.tar.gz"
+curl -fsSLo checksums.txt "https://github.com/YoungHong1992/hao/releases/download/${HAO_RELEASE}/checksums.txt"
+sha256sum -c checksums.txt
+```
+
+发布标识不表达兼容级别，只标识一次不可变构建。归档内的 `RELEASE` 和
+`build-info.json` 分别记录发布标识、完整提交哈希、UTC 构建时间和真实 VM 验收记录。
 
 ### 远程自举入口
 
@@ -119,6 +132,31 @@ hao/
 | **Pi** | 终端 AI 编程助手 | 500MB 磁盘 |
 | **Claude Code** | Anthropic 官方终端 AI 编程助手，可选配置自定义网关/模型 | 500MB 磁盘 |
 
+### 用一句话理解 Nginx
+
+可以把 **Nginx 理解成服务器入口处的“接线员兼门卫”**：外部请求先到 Nginx，
+Nginx 看清请求要找谁，再把它转接给 New-API、CliproxyAPI 等内部服务；同时还负责
+HTTPS 证书、标准的 80/443 端口、WebSocket、访问日志和基础访问控制。
+
+```text
+api.example.com ──┐
+                  ├──> Nginx（接线员）──> 对应的内部服务
+cpa.example.com ──┘
+```
+
+域名就像分机号。同一个公网 IP 上部署多个服务时，Nginx 可以根据不同域名把请求转到
+不同服务。如果完全不用域名，也可以使用 `IP:不同端口` 区分，例如：
+
+```text
+203.0.113.10:3000  -> New-API
+203.0.113.10:8317  -> CliproxyAPI
+```
+
+但一个 IP 上的多个服务不能同时直接占用相同的 80/443 端口。技术上，单个内网服务可以
+不经过 Nginx，直接使用 `IP:端口` 访问；当前 HAO 的 New-API 和 CliproxyAPI 部署仍将
+Nginx 作为统一入口，用它处理转发、HTTPS 和 WebSocket。生产环境建议保留 Nginx；只有
+在内网、VPN 或其他受控环境中，直接开放服务端口才通常更合适。
+
 ---
 
 ## 🛠 AI 工作流
@@ -132,6 +170,43 @@ hao/
 6. Status/Doctor → ./hao status / doctor 检查部署状态并辅助排障
 ```
 
+### HAO 如何标识自己管理的资源
+
+通过 HAO 成功部署后，根执行器会在 `/var/lib/hao/` 写入不含秘密的管理清单：
+
+```text
+/var/lib/hao/
+├── NOTICE
+├── manifest.json
+└── services/
+    ├── nginx.json
+    ├── nginx.resources
+    └── new-api.json
+```
+
+- `managed`：由 HAO 生成并维护，`doctor` 会检查文件哈希和配置漂移。
+- `shared`：HAO 可能调整过，但它属于整个系统，不能由 HAO 独占或随意覆盖。
+- `observed`：HAO 只记录它的存在，不声称拥有它。
+- `secret`：只记录凭据文件路径，哈希和值都会隐藏。
+
+包含运行时秘密的生成配置会限制为仅 root 可读；manifest 不保存文件内容。普通受管文件只
+记录 SHA-256，用于发现漂移，不能据此恢复配置内容。
+
+HAO 生成的 Nginx、systemd、sysctl、APT 和 Compose 配置会带有 `Managed by HAO`、
+服务名和发布标识；Docker 容器配置还带有 `io.hao.*` labels。其他工程师或 AI 可以运行：
+
+```bash
+./hao inventory    # 输出机器可读的 JSON 管理清单
+./hao status       # 查看服务是否安装以及 managed/observed/untracked 状态
+./hao doctor       # 检查服务状态、环境和受管文件是否被修改或删除
+```
+
+发现没有 HAO 标识的现有配置时，应视为外部资源并默认保留。发现受管文件被人工修改时，
+`doctor` 只报告漂移，不会自动覆盖修改。
+
+较早的 HAO 部署没有统一 manifest。升级后它们会继续显示为 `untracked`，直到对应服务
+通过新版 HAO 完成一次受控重部署；HAO 不会仅凭文件路径自动认领旧资源。
+
 > 同时部署 CliproxyAPI 与 New-API 时，请为每个 Web 服务准备独立域名，避免多个服务争用同一个 Nginx `server_name` 和 `/` 路由。
 
 ### CLI 命令
@@ -142,6 +217,7 @@ hao/
 sudo ./hao apply --profile deploy.env --yes
 ./hao status
 ./hao doctor --profile deploy.env
+./hao inventory
 ```
 
 ### AI Agent Skill
@@ -169,6 +245,24 @@ HAO_DB_TYPE="postgresql"       # postgresql | mysql
 HAO_NEWAPI_IMAGE="calciumion/new-api:latest"
 HAO_CONFIRM_APPLY="yes"        # 等价于 apply --yes
 ```
+
+Docker 镜像默认跟随 `latest`。`hao plan` 会同时显示最近一次仓库审查确认的两个固定标签，
+用户可通过 `HAO_CLIPROXY_IMAGE` / `HAO_NEWAPI_IMAGE` 或对应 CLI 参数选择。候选来源于
+`config/image-candidates.tsv`，每次发布前必须刷新和验收；New-API 当前上游候选仍属于 RC，
+计划输出会明确标记为 `release-candidate`。
+
+### 支持的操作系统
+
+正式支持矩阵遵循 Debian 的 stable/oldstable 与 Ubuntu 仍处于标准维护期的主流 LTS：
+
+| 发行版 | 支持版本 |
+|---|---|
+| Debian | 13、12 |
+| Ubuntu LTS | 26.04、24.04、22.04 |
+
+`preflight` 会拒绝矩阵外的版本。支持矩阵依据
+[Debian Releases](https://www.debian.org/releases/) 和
+[Ubuntu release cycle](https://ubuntu.com/about/release-cycle) 维护，并在每次发布前复核。
 
 ---
 
@@ -200,10 +294,13 @@ apt-get install -y shellcheck
 sudo ./tests/test-maintenance-idempotency.sh
 ```
 
+正式发布流程和真实 VM 验收矩阵见 [发布清单](docs/releasing.md)。GitHub Release 通过
+`Release` workflow 手工触发，标识由 UTC 日期和目标提交自动生成，已有发布不会被覆盖。
+
 ### 新增模块
 
 向 HAO 添加新组件（服务或工具配置模块）请遵循 [docs/adding-a-module.md](docs/adding-a-module.md) 的约定。
 
 ---
 
-**最后更新**: 2026-07-07
+**最后更新**: 2026-07-13

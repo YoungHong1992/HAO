@@ -5,7 +5,7 @@
 #
 # VLESS + Reality 一键部署脚本 (Xray-core)
 #
-# 版本: v4.0.0
+# 发布标识由 HAO_RELEASE 提供
 # 功能:
 #   1. 下载并安装 Xray-core 最新版
 #   2. 自动生成 X25519 密钥对
@@ -40,7 +40,7 @@ WHITE='\033[1;37m'
 NC='\033[0m'
 BOLD='\033[1m'
 DIM='\033[2m'
-readonly COMMON_VERSION="4.0.0"
+readonly COMMON_VERSION="${HAO_RELEASE:-dev-standalone}"
 readonly DEPLOY_LOG_DIR="/var/log/vps-deploy"
 
 print_header() {
@@ -51,7 +51,7 @@ print_header() {
     echo "║                                                              ║"
     printf  "║           %-51s║\n" "$title"
     echo "║                                                              ║"
-    printf  "║               版本: v%-40s║\n" "${COMMON_VERSION}"
+    printf  "║           发布标识: %-40s║\n" "${COMMON_VERSION}"
     echo "║                                                              ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"

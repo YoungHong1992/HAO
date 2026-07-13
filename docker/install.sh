@@ -4,7 +4,7 @@
 ################################################################################
 #
 # Docker 自动安装脚本
-# 版本: v4.0.0
+# 发布标识由 HAO_RELEASE 提供
 #
 # 功能说明：
 #   1. 检测 Docker 是否已安装，已安装则确保服务运行
@@ -14,9 +14,9 @@
 #   5. 启动并设置 Docker 开机自启
 #
 # 支持系统：
-#   - Ubuntu 20.04+
-#   - Debian 11+
-#   - CentOS Stream 9 / Rocky / AlmaLinux / Fedora
+#   - Ubuntu 26.04/24.04/22.04 LTS
+#   - Debian 13/12
+#   - 其他发行版代码路径不属于 HAO 正式发布验收范围
 #
 # 使用方法：
 #   chmod +x install.sh
@@ -39,7 +39,7 @@ WHITE='\033[1;37m'
 NC='\033[0m'
 BOLD='\033[1m'
 DIM='\033[2m'
-readonly COMMON_VERSION="4.0.0"
+readonly COMMON_VERSION="${HAO_RELEASE:-dev-standalone}"
 readonly DEPLOY_LOG_DIR="/var/log/vps-deploy"
 
 print_header() {
@@ -50,7 +50,7 @@ print_header() {
     echo "║                                                              ║"
     printf  "║           %-51s║\n" "$title"
     echo "║                                                              ║"
-    printf  "║               版本: v%-40s║\n" "${COMMON_VERSION}"
+    printf  "║           发布标识: %-40s║\n" "${COMMON_VERSION}"
     echo "║                                                              ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -740,10 +740,12 @@ ensure_docker() {
             curl -fsSL --connect-timeout 30 "https://download.docker.com/linux/$distro/gpg" | gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null
             chmod a+r /etc/apt/keyrings/docker.gpg
 
-            echo \
-              "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$distro \
-              $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-              tee /etc/apt/sources.list.d/docker.list > /dev/null
+            {
+                echo "# Managed by HAO"
+                echo "# Service: docker"
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$distro \
+                $(. /etc/os-release && echo "$VERSION_CODENAME") stable"
+            } > /etc/apt/sources.list.d/docker.list
 
             apt-get update -qq
             apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
@@ -792,21 +794,21 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     for arg in "$@"; do
         case "$arg" in
             -h|--help)
-                echo "Docker 自动安装脚本 v${COMMON_VERSION:-4.0.0}"
+                echo "Docker 自动安装脚本 ${COMMON_VERSION}"
                 echo ""
                 echo "用法:"
                 echo "  ./install.sh       # 安装 Docker"
                 echo "  ./install.sh -h    # 显示此帮助"
                 echo "  # 本脚本自包含，可从 docker/ 目录直接运行"
                 echo ""
-                echo "支持系统: Ubuntu 20.04+, Debian 11+, CentOS Stream 9+"
+                echo "HAO 正式支持: Ubuntu 26.04/24.04/22.04 LTS, Debian 13/12"
                 exit 0
                 ;;
         esac
     done
 
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${CYAN}   Docker 自动安装程序 v${COMMON_VERSION:-4.0.0}${NC}"
+    echo -e "${CYAN}   Docker 自动安装程序 ${COMMON_VERSION}${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 

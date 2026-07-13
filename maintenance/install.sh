@@ -4,7 +4,7 @@
 ################################################################################
 #
 # Maintenance 基础维护脚本
-# 版本: v4.0.0
+# 发布标识由 HAO_RELEASE 提供
 #
 # 功能说明：
 #   1. 安装并配置 fail2ban SSH 防护
@@ -27,7 +27,7 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
-readonly COMMON_VERSION="4.0.0"
+readonly COMMON_VERSION="${HAO_RELEASE:-dev-standalone}"
 readonly DEPLOY_LOG_DIR="/var/log/vps-deploy"
 
 setup_logging() {
@@ -47,7 +47,7 @@ log_step()    { echo -e "${CYAN}[STEP]${NC} $(date '+%H:%M:%S') $*" >&2; }
 print_header() {
     clear 2>/dev/null || true
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${CYAN}   Maintenance 基础维护 v${COMMON_VERSION}${NC}"
+    echo -e "${CYAN}   Maintenance 基础维护 ${COMMON_VERSION}${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 }
@@ -83,7 +83,7 @@ confirm() {
 
 show_help() {
     cat <<EOF
-Maintenance 基础维护脚本 v${COMMON_VERSION}
+Maintenance 基础维护脚本 ${COMMON_VERSION}
 
 用法:
   sudo ./install.sh
@@ -470,8 +470,10 @@ main() {
 
     mkdir -p /var/lib/hao
     cat > /var/lib/hao/maintenance.installed <<EOF
+# Managed by HAO
+# Service: maintenance
 installed_at=$(date '+%Y-%m-%d %H:%M:%S')
-version=${COMMON_VERSION}
+release=${COMMON_VERSION}
 fail2ban_jail=/etc/fail2ban/jail.d/hao-sshd.local
 journald_conf=/etc/systemd/journald.conf.d/hao.conf
 docker_daemon=/etc/docker/daemon.json

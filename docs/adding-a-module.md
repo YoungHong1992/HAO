@@ -1,6 +1,6 @@
 # 新增模块指南（Adding a Module）
 
-本文档定义向 HAO 添加新组件（服务或工具，例如未来的 openclaw、hermes）的约定。按此模板操作，新模块即可被 `hao plan/preflight/apply/status/doctor` 编排，并自动获得 AI agent 工作流支持。
+本文档定义向 HAO 添加新组件（服务或工具，例如未来的 openclaw、hermes）的约定。按此模板操作，新模块即可被 `hao plan/preflight/apply/status/doctor/inventory` 编排，并自动获得 AI agent 工作流支持。
 
 ## 模块类型
 
@@ -52,6 +52,7 @@
 | `service_short_name()` | 展示短名 |
 | `normalize_service_id()` | ID 与别名解析 |
 | `run_install()` 的 case | 传递模块专属 `HAO_*` 环境变量 |
+| `record_service_management_state()` | 登记 managed/shared/observed/secret 资源，不能记录秘密值 |
 | `print_summary()` 的 case | 安装后常用命令提示 |
 | `print_cli_status()` 的 case | status 一行详情 |
 | `print_cli_plan()` 的 case（可选） | plan 输出模块专属配置（secret 显示 `provided (hidden)`） |
@@ -88,3 +89,8 @@
 - 覆盖已有配置前先 `backup_file`
 - 凭据文件 0600，用 `write_credentials_file` 原子写入
 - 破坏性操作（卸载、删卷、删证书）放独立脚本，绝不进入 `install.sh` 主流程
+- 独占配置使用模块专属文件/drop-in，不直接追加系统主配置
+- HAO 生成的文本配置头部写 `Managed by HAO`、服务 ID 和发布标识
+- Docker 服务添加 `io.hao.managed`、`io.hao.service`、`io.hao.release` labels
+- 共享或既有资源标记为 `shared`/`observed`，不得为了登记状态而认领或覆盖
+- 凭据资源标记为 `secret`，状态清单只记录路径，值和哈希均不得写入

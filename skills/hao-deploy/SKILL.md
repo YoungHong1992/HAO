@@ -15,8 +15,13 @@ Use HAO as a deterministic executor, not as a chatty terminal menu. Keep all hum
 4. Run `preflight` and address failures before installation.
 5. Run `apply` only after explicit user confirmation, passing `--yes`.
 6. Run `status` or `doctor` after deployment and summarize results.
+7. Run `inventory` to report which resources are managed, shared, observed, or secret.
 
 Never print secret values. If a password is supplied, refer to it as provided/hidden. Prefer generated credentials and report the credential file path after deployment.
+
+HAO records ownership under `/var/lib/hao`. Preserve untracked resources by default.
+If `doctor` reports drift in a managed resource, stop and explain the difference;
+do not overwrite it without explicit user review.
 
 ## Commands
 
@@ -28,6 +33,7 @@ Use `scripts/hao-run.sh` to invoke the repo-local CLI from any working directory
 sudo ./scripts/hao-run.sh apply --profile deploy.env --yes
 ./scripts/hao-run.sh status
 ./scripts/hao-run.sh doctor --profile deploy.env
+./scripts/hao-run.sh inventory
 ```
 
 If the script cannot find the repository, set `HAO_REPO_DIR=/path/to/hao`.

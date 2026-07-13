@@ -4,7 +4,7 @@
 ################################################################################
 #
 # New-API Docker 部署脚本
-# 版本: v4.0.0
+# 发布标识由 HAO_RELEASE 提供
 #
 # 功能说明：
 #   1. 部署 New-API AI 模型聚合管理系统（Docker 方式）
@@ -118,7 +118,7 @@ fi
 # ==================== 欢迎 ====================
 clear 2>/dev/null || true
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${CYAN}   New-API Docker 部署程序 v${COMMON_VERSION}${NC}"
+echo -e "${CYAN}   New-API Docker 部署程序 ${COMMON_VERSION}${NC}"
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
@@ -247,6 +247,9 @@ log_step "[3/8] 生成 Docker Compose 配置..."
 
 if [ "$USE_POSTGRESQL" = true ]; then
     cat > "$SERVICE_DIR/docker-compose.yml" <<COMPOSE_EOF
+# Managed by HAO
+# Service: new-api
+# Release: ${COMMON_VERSION}
 version: '3.8'
 
 services:
@@ -254,6 +257,10 @@ services:
     image: $DOCKER_IMAGE
     container_name: new-api
     restart: always
+    labels:
+      io.hao.managed: "true"
+      io.hao.service: "new-api"
+      io.hao.release: "${COMMON_VERSION}"
     ports:
       - "127.0.0.1:$NEWAPI_PORT:3000"
     volumes:
@@ -327,6 +334,9 @@ volumes:
 COMPOSE_EOF
 else
     cat > "$SERVICE_DIR/docker-compose.yml" <<COMPOSE_EOF
+# Managed by HAO
+# Service: new-api
+# Release: ${COMMON_VERSION}
 version: '3.8'
 
 services:
@@ -334,6 +344,10 @@ services:
     image: $DOCKER_IMAGE
     container_name: new-api
     restart: always
+    labels:
+      io.hao.managed: "true"
+      io.hao.service: "new-api"
+      io.hao.release: "${COMMON_VERSION}"
     ports:
       - "127.0.0.1:$NEWAPI_PORT:3000"
     volumes:
@@ -409,6 +423,7 @@ volumes:
 COMPOSE_EOF
 fi
 
+chmod 600 "$SERVICE_DIR/docker-compose.yml"
 log_success "Docker Compose 配置已生成"
 
 # ==================== 拉取镜像 ====================
@@ -516,6 +531,9 @@ NGX_LOC_EOF
 
 if [ "$USE_HTTP_ONLY" = true ]; then
     cat > "$CONF_FILE" <<NGX_HTTP
+# Managed by HAO
+# Service: new-api
+# Release: ${COMMON_VERSION}
 server {
     listen 80;
     server_name $DOMAIN;
@@ -528,6 +546,9 @@ $NGINX_LOCATION
 NGX_HTTP
 elif [ "$NGINX_SUPPORTS_HTTP3" = true ]; then
     cat > "$CONF_FILE" <<NGX_H3
+# Managed by HAO
+# Service: new-api
+# Release: ${COMMON_VERSION}
 server {
     listen 80;
     listen 443 ssl;
@@ -568,6 +589,9 @@ $NGINX_LOCATION
 NGX_H3
 else
     cat > "$CONF_FILE" <<NGX_H2
+# Managed by HAO
+# Service: new-api
+# Release: ${COMMON_VERSION}
 server {
     listen 80;
     listen 443 ssl;
@@ -637,7 +661,7 @@ fi
 
 write_credentials_file "$CREDENTIALS_FILE" <<INFO_EOF
 ================================================
-       New-API Docker 部署完成 (v${COMMON_VERSION})
+       New-API Docker 部署完成 (${COMMON_VERSION})
 ================================================
 部署时间: $(date '+%Y-%m-%d %H:%M:%S')
 访问模式: $(if [ "$USE_HTTP_ONLY" = true ]; then echo "HTTP"; elif [ "$USE_DOMAIN" = true ]; then echo "域名"; else echo "IP"; fi)
@@ -688,7 +712,7 @@ log_success "凭据信息已保存: $CREDENTIALS_FILE"
 # ==================== 完成 ====================
 clear 2>/dev/null || true
 printf '%s\n' "================================================"
-printf '%s\n' "       New-API Docker 部署完成 (v${COMMON_VERSION})"
+printf '%s\n' "       New-API Docker 部署完成 (${COMMON_VERSION})"
 printf '%s\n' "================================================"
 printf '访问地址: %s\n' "$ACCESS_URL"
 printf '凭据文件: %s\n' "$CREDENTIALS_FILE"

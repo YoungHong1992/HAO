@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034
 #
 # Pi Coding Agent 安装脚本
-# 版本: v4.0.0
+# 发布标识由 HAO_RELEASE 提供
 # 更新日期: 2026-06-08
 # 依赖: Node.js >= 18 (脚本会自动安装)
 #
@@ -28,7 +28,7 @@ WHITE='\033[1;37m'
 NC='\033[0m'
 BOLD='\033[1m'
 DIM='\033[2m'
-readonly COMMON_VERSION="4.0.0"
+readonly COMMON_VERSION="${HAO_RELEASE:-dev-standalone}"
 readonly DEPLOY_LOG_DIR="/var/log/vps-deploy"
 
 print_header() {
@@ -39,7 +39,7 @@ print_header() {
     echo "║                                                              ║"
     printf  "║           %-51s║\n" "$title"
     echo "║                                                              ║"
-    printf  "║               版本: v%-40s║\n" "${COMMON_VERSION}"
+    printf  "║           发布标识: %-40s║\n" "${COMMON_VERSION}"
     echo "║                                                              ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -636,7 +636,7 @@ check_root
 setup_logging "pi-install"
 
 echo "============================================"
-echo "   Pi Coding Agent 安装脚本 v${COMMON_VERSION}"
+echo "   Pi Coding Agent 安装脚本 ${COMMON_VERSION}"
 echo "============================================"
 echo ""
 
