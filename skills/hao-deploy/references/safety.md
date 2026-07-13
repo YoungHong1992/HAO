@@ -27,5 +27,12 @@ Call out these areas in the plan summary:
 - Docker Compose state under `/opt/docker-services`
 - SSL certificate issuance or replacement
 - Maintenance baseline changes such as fail2ban, swap, journald, and Docker log rotation
+- Git identity changes and installation of the official GitHub CLI apt repository
+- Personal GitHub authorization on a server (requires separate confirmation)
+
+For `git-github`, ask for the exact Git name, email, target user, machine role,
+scope, and auth mode. Never infer identity from a login name, repository history,
+or GitHub account. Root authorization is allowed on root-only VPS hosts, but warn
+that GitHub credentials, Git configuration, and SSH keys will be root-owned.
 
 Do not run uninstall scripts, delete Docker volumes, delete SSL files, or remove service directories unless the user explicitly asks for that exact operation.

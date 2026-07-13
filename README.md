@@ -81,6 +81,13 @@ curl -fsSL https://raw.githubusercontent.com/YoungHong1992/hao/main/install.sh |
 cd maintenance && sudo ./install.sh        # 安装服务器维护基线
 cd ../nginx && sudo ./install.sh           # 安装 Nginx
 cd ../docker && sudo ./install.sh          # 安装 Docker
+cd ../git-github && sudo \
+  HAO_GIT_NAME="用户确认的姓名" \
+  HAO_GIT_EMAIL="用户确认的邮箱" \
+  HAO_GIT_MACHINE_ROLE=workstation \
+  HAO_GIT_SCOPE=global \
+  HAO_GIT_TARGET_USER="$USER" \
+  ./install.sh                             # 安装 Git + GitHub 工具
 cd ../cliproxyapi && sudo ./install.sh     # 安装 CliproxyAPI（默认 Docker Compose）
 # CPA 裸机安装：cd ../cliproxyapi && sudo HAO_CLIPROXY_MODE=bare ./install.sh
 cd ../new-api && sudo ./install.sh         # 安装 New-API
@@ -103,6 +110,7 @@ hao/
 ├── maintenance/                # 服务器维护基线 (fail2ban / swap / 日志限制)
 ├── nginx/                      # Nginx (HTTP/3 + BBR)
 ├── docker/                     # Docker Engine + Compose
+├── git-github/                 # Git 身份与 GitHub Web + SSH 授权工具
 ├── cliproxyapi/                # 轻量 AI API 转发代理
 ├── new-api/                    # AI 模型网关
 ├── pi-coding-agent/            # 终端 AI 编程助手
@@ -117,6 +125,7 @@ hao/
 
 - [Cloudflare DNS 配置指南](docs/cloudflare-dns-guide.md)
 - [Claude Code 安装和配置指南](docs/claude-code-guide.md)
+- [Git + GitHub 工具说明](git-github/README.md)
 
 ---
 
@@ -127,6 +136,7 @@ hao/
 | **Maintenance** | fail2ban、swap、journald 限制、Docker 日志轮转 | 基础维护 |
 | **Nginx** | HTTP/3 (QUIC) + BBR 优化，所有服务的基础设施 | 512MB 内存 |
 | **Docker** | Docker Engine + Compose 插件 | 无额外需求 |
+| **Git + GitHub** | Git 身份、官方 `gh` 和 Web + SSH 授权准备；默认不包含在 `all` | 个人开发机 / 管理型 VPS |
 | **CliproxyAPI** | 轻量 AI API 转发代理，默认 Docker Compose，可选裸机 | 256MB 内存 |
 | **New-API** | AI 模型网关与资产管理系统，Docker Compose | ≥ 1GB 内存 |
 | **Pi** | 终端 AI 编程助手 | 500MB 磁盘 |
@@ -156,6 +166,19 @@ cpa.example.com ──┘
 不经过 Nginx，直接使用 `IP:端口` 访问；当前 HAO 的 New-API 和 CliproxyAPI 部署仍将
 Nginx 作为统一入口，用它处理转发、HTTPS 和 WebSocket。生产环境建议保留 Nginx；只有
 在内网、VPN 或其他受控环境中，直接开放服务端口才通常更合适。
+
+### Git、gh、SSH Key 分别做什么
+
+可以把它们理解成三层：Git 的 `user.name` / `user.email` 决定提交上写谁；SSH Key
+负责通过 GitHub 安全地拉取和推送仓库；`gh` 负责创建 PR、Release 等 GitHub 平台操作。
+HAO 默认采用 `gh auth login --web --git-protocol ssh`，不要求用户手工创建长期 Token。
+
+`git-github` 是个人身份工具，因此必须显式选择，不会随 `--services all` 安装。AI 必须先
+询问用户准确的姓名、邮箱、目标系统用户、机器角色和配置范围，不能从系统用户名、GitHub
+账号或历史提交自动推导。安装只准备工具和 Git 身份，浏览器/设备码授权由目标用户
+随后运行 `hao-github-authorize` 完成。生产 VPS 若只需拉取公开仓库，选择 `skip` 即可；
+私有仓库自动部署优先使用只读 Deploy Key 或 GitHub App。root-only VPS 可以明确选择
+`root`，HAO 会警告凭据和 SSH Key 均归 root 所有，但不会阻止授权。
 
 ---
 
@@ -244,6 +267,18 @@ HAO_CLIPROXY_IMAGE="eceasy/cli-proxy-api:latest"
 HAO_DB_TYPE="postgresql"       # postgresql | mysql
 HAO_NEWAPI_IMAGE="calciumion/new-api:latest"
 HAO_CONFIRM_APPLY="yes"        # 等价于 apply --yes
+```
+
+Git/GitHub 工具使用单独 profile，并要求用户逐项确认：
+
+```bash
+HAO_SERVICES="git-github"
+HAO_GIT_NAME="用户明确提供的姓名"
+HAO_GIT_EMAIL="用户明确提供的邮箱"
+HAO_GIT_MACHINE_ROLE="workstation" # workstation | server
+HAO_GIT_SCOPE="global"              # global | repository
+HAO_GIT_TARGET_USER="your-user"
+HAO_GH_AUTH_MODE="web"              # web | skip
 ```
 
 Docker 镜像默认跟随 `latest`。`hao plan` 会同时显示最近一次仓库审查确认的两个固定标签，

@@ -1,6 +1,6 @@
 ---
 name: hao-deploy
-description: AI-assisted deployment of HAO (HongAgentOps) services on Debian or Ubuntu VPS hosts. Use when an AI agent needs to plan, preflight, apply, inspect, or troubleshoot server deployments for Maintenance, Nginx, Docker, CliproxyAPI, New-API, Pi, or Claude Code using the repository's hao CLI and profile-driven workflow.
+description: AI-assisted deployment of HAO (HongAgentOps) services and tools on Debian or Ubuntu hosts. Use when an AI agent needs to plan, preflight, apply, inspect, or troubleshoot Maintenance, Nginx, Docker, Git/GitHub, CliproxyAPI, New-API, Pi, or Claude Code using the repository's hao CLI and profile-driven workflow.
 ---
 
 # HAO Deploy
@@ -16,6 +16,10 @@ Use HAO as a deterministic executor, not as a chatty terminal menu. Keep all hum
 5. Run `apply` only after explicit user confirmation, passing `--yes`.
 6. Run `status` or `doctor` after deployment and summarize results.
 7. Run `inventory` to report which resources are managed, shared, observed, or secret.
+
+For `git-github`, ask the user for the exact Git name, Git email, target OS user,
+machine role (`workstation` or `server`), configuration scope, and GitHub auth
+mode. Do not infer any of these values from the host, repository, or GitHub account.
 
 Never print secret values. If a password is supplied, refer to it as provided/hidden. Prefer generated credentials and report the credential file path after deployment.
 

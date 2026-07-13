@@ -155,6 +155,8 @@ bootstrap_full_repo() {
         || [ ! -f "$root_dir/maintenance/install.sh" ] \
         || [ ! -f "$root_dir/nginx/install.sh" ] \
         || [ ! -f "$root_dir/docker/install.sh" ] \
+        || [ ! -f "$root_dir/git-github/install.sh" ] \
+        || [ ! -f "$root_dir/git-github/authorize.sh" ] \
         || [ ! -f "$root_dir/cliproxyapi/install.sh" ] \
         || [ ! -f "$root_dir/new-api/install.sh" ] \
         || [ ! -f "$root_dir/pi-coding-agent/install.sh" ] \
@@ -188,6 +190,8 @@ bootstrap_full_repo() {
 if [ ! -f "$INSTALL_DIR/maintenance/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/nginx/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/docker/install.sh" ] \
+    || [ ! -f "$INSTALL_DIR/git-github/install.sh" ] \
+    || [ ! -f "$INSTALL_DIR/git-github/authorize.sh" ] \
     || [ ! -f "$INSTALL_DIR/cliproxyapi/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/new-api/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/pi-coding-agent/install.sh" ] \
@@ -779,6 +783,7 @@ esac
 readonly SVC_MAINTENANCE="maintenance"
 readonly SVC_NGINX="nginx"
 readonly SVC_DOCKER="docker"
+readonly SVC_GITGITHUB="git-github"
 readonly SVC_CLIPROXY="cliproxyapi"
 readonly SVC_NEWAPI="newapi"
 readonly SVC_PI="pi"
@@ -803,6 +808,12 @@ SVC_DESC[$SVC_DOCKER]="Docker Engine + Docker Compose 插件"
 SVC_HINT[$SVC_DOCKER]="无额外需求"
 SVC_SCRIPT[$SVC_DOCKER]="$INSTALL_DIR/docker/install.sh"
 SVC_DEPENDS[$SVC_DOCKER]=""
+
+SVC_NAME[$SVC_GITGITHUB]="Git + GitHub"
+SVC_DESC[$SVC_GITGITHUB]="Git 提交身份、GitHub CLI 与 SSH 授权准备（必须显式选择）"
+SVC_HINT[$SVC_GITGITHUB]="个人开发机 / 管理型 VPS"
+SVC_SCRIPT[$SVC_GITGITHUB]="$INSTALL_DIR/git-github/install.sh"
+SVC_DEPENDS[$SVC_GITGITHUB]=""
 
 SVC_NAME[$SVC_CLIPROXY]="CliproxyAPI"
 SVC_DESC[$SVC_CLIPROXY]="轻量 AI API 转发代理，默认 Docker Compose，支持裸机 Systemd"
@@ -831,6 +842,11 @@ SVC_DEPENDS[$SVC_CLAUDECODE]=""
 # Ordered list for display
 readonly ALL_SERVICES=(
     "$SVC_MAINTENANCE" "$SVC_NGINX" "$SVC_DOCKER"
+    "$SVC_CLIPROXY" "$SVC_NEWAPI" "$SVC_GITGITHUB" "$SVC_PI" "$SVC_CLAUDECODE"
+)
+# Personal identity tooling is opt-in and intentionally excluded from `--services all`.
+readonly DEFAULT_ALL_SERVICES=(
+    "$SVC_MAINTENANCE" "$SVC_NGINX" "$SVC_DOCKER"
     "$SVC_CLIPROXY" "$SVC_NEWAPI" "$SVC_PI" "$SVC_CLAUDECODE"
 )
 
@@ -852,6 +868,13 @@ CLIPROXY_DEPLOY_MODE="docker"  # docker | bare
 DB_TYPE="postgresql"           # newapi
 CLIPROXY_IMAGE=""
 NEWAPI_IMAGE=""
+GIT_NAME=""
+GIT_EMAIL=""
+GIT_MACHINE_ROLE=""
+GIT_SCOPE=""
+GIT_REPO_DIR=""
+GIT_TARGET_USER=""
+GH_AUTH_MODE=""
 
 # ==================== 单轮状态重置 ====================
 
@@ -871,6 +894,13 @@ reset_iteration_state() {
     DB_TYPE="postgresql"
     CLIPROXY_IMAGE=""
     NEWAPI_IMAGE=""
+    GIT_NAME=""
+    GIT_EMAIL=""
+    GIT_MACHINE_ROLE=""
+    GIT_SCOPE=""
+    GIT_REPO_DIR=""
+    GIT_TARGET_USER=""
+    GH_AUTH_MODE=""
 
     # CliproxyAPI 默认 Docker Compose；裸机选择只在当前轮生效。
     SVC_DEPENDS[$SVC_CLIPROXY]="$SVC_NGINX $SVC_DOCKER"
@@ -903,6 +933,11 @@ detect_installed_services() {
                 if command -v docker &>/dev/null \
                     && systemctl is-active --quiet docker 2>/dev/null \
                     && (docker compose version &>/dev/null || command -v docker-compose &>/dev/null); then
+                    ALREADY_INSTALLED[$svc]=true
+                fi
+                ;;
+            "$SVC_GITGITHUB")
+                if command -v git &>/dev/null && command -v gh &>/dev/null; then
                     ALREADY_INSTALLED[$svc]=true
                 fi
                 ;;
@@ -939,6 +974,7 @@ service_short_name() {
         "$SVC_MAINTENANCE") echo "Maintenance" ;;
         "$SVC_NGINX")    echo "Nginx" ;;
         "$SVC_DOCKER")   echo "Docker" ;;
+        "$SVC_GITGITHUB") echo "Git + GitHub" ;;
         "$SVC_CLIPROXY") echo "CliproxyAPI" ;;
         "$SVC_NEWAPI")   echo "New-API" ;;
         "$SVC_PI")       echo "Pi" ;;
@@ -964,6 +1000,20 @@ compose_running_text() {
         echo "运行中"
     else
         echo "已部署，未运行或状态未知"
+    fi
+}
+
+gh_authenticated_for_user() {
+    local user="$1" home
+    command -v gh >/dev/null 2>&1 || return 1
+    home="$(getent passwd "$user" | awk -F: '{print $6}')"
+    [ -n "$home" ] || return 1
+    if [ "$user" = "$(id -un)" ]; then
+        HOME="$home" gh auth status --hostname github.com >/dev/null 2>&1
+    elif [ "$EUID" -eq 0 ] && command -v runuser >/dev/null 2>&1; then
+        runuser -u "$user" -- env HOME="$home" gh auth status --hostname github.com >/dev/null 2>&1
+    else
+        return 1
     fi
 }
 
@@ -1058,7 +1108,7 @@ needs_access_mode() {
 # ==================== 安装执行 ====================
 
 record_service_management_state() {
-    local svc="$1" path domain_value binary
+    local svc="$1" path domain_value binary target_home public_key
     local -a candidates=() resources=()
 
     case "$svc" in
@@ -1092,6 +1142,28 @@ record_service_management_state() {
             )
             binary="$(command -v docker 2>/dev/null || true)"
             [ -n "$binary" ] && candidates+=("observed:$binary")
+            ;;
+        "$SVC_GITGITHUB")
+            candidates+=(
+                "auto:/etc/apt/sources.list.d/github-cli.list"
+                "observed:/etc/apt/keyrings/githubcli-archive-keyring.gpg"
+                "auto:/usr/local/bin/hao-github-authorize"
+            )
+            binary="$(command -v git 2>/dev/null || true)"
+            [ -n "$binary" ] && candidates+=("observed:$binary")
+            binary="$(command -v gh 2>/dev/null || true)"
+            [ -n "$binary" ] && candidates+=("observed:$binary")
+            target_home="$(getent passwd "$GIT_TARGET_USER" | awk -F: '{print $6}')"
+            if [ "$GIT_SCOPE" = "repository" ]; then
+                candidates+=("shared:$GIT_REPO_DIR/.git/config")
+            else
+                [ -n "$target_home" ] && candidates+=("shared:$target_home/.gitconfig")
+            fi
+            if [ -n "${target_home:-}" ] && [ -d "$target_home/.ssh" ]; then
+                for public_key in "$target_home"/.ssh/*.pub; do
+                    [ -f "$public_key" ] && candidates+=("observed:$public_key")
+                done
+            fi
             ;;
         "$SVC_CLIPROXY")
             if [ "$CLIPROXY_DEPLOY_MODE" = "docker" ]; then
@@ -1211,6 +1283,17 @@ run_install() {
                 extra_env+=("HAO_DB_TYPE=$DB_TYPE")
                 extra_env+=("HAO_NEWAPI_IMAGE=$NEWAPI_IMAGE")
                 ;;
+            "$SVC_GITGITHUB")
+                extra_env+=(
+                    "HAO_GIT_NAME=$GIT_NAME"
+                    "HAO_GIT_EMAIL=$GIT_EMAIL"
+                    "HAO_GIT_MACHINE_ROLE=$GIT_MACHINE_ROLE"
+                    "HAO_GIT_SCOPE=$GIT_SCOPE"
+                    "HAO_GIT_TARGET_USER=$GIT_TARGET_USER"
+                    "HAO_GH_AUTH_MODE=$GH_AUTH_MODE"
+                )
+                [ -n "$GIT_REPO_DIR" ] && extra_env+=("HAO_GIT_REPO_DIR=$GIT_REPO_DIR")
+                ;;
             "$SVC_PI")
                 extra_env+=("HAO_NO_PROMPT=1")
                 ;;
@@ -1286,6 +1369,20 @@ print_summary() {
                 echo "    docker info  |  docker compose version"
                 echo ""
                 ;;
+            "$SVC_GITGITHUB")
+                echo "  Git + GitHub:"
+                echo "    git --version  |  gh --version"
+                if [ "$GH_AUTH_MODE" = "web" ]; then
+                    if gh_authenticated_for_user "$GIT_TARGET_USER"; then
+                        echo "    GitHub 授权: 已为 $GIT_TARGET_USER 配置"
+                    else
+                        echo "    以 $GIT_TARGET_USER 身份运行: hao-github-authorize"
+                    fi
+                else
+                    echo "    GitHub 个人账号授权已按 profile 跳过"
+                fi
+                echo ""
+                ;;
             "$SVC_NEWAPI")
                 echo "  New-API:"
                 echo "    cd /opt/docker-services/new-api && docker compose ps"
@@ -1341,7 +1438,7 @@ AI-native server deployment and model operations toolkit
 
 通用参数:
   --profile FILE                  读取 .env 风格部署配置
-  --services LIST                 逗号分隔服务: maintenance,nginx,docker,cliproxyapi,new-api,pi,claude-code
+  --services LIST                 逗号分隔服务: maintenance,nginx,docker,cliproxyapi,new-api,git-github,pi,claude-code
   --access-mode MODE              domain | ip | http
   --domain VALUE                  单个 Web 服务域名/IP
   --cliproxy-domain VALUE         CliproxyAPI 专用域名
@@ -1350,6 +1447,13 @@ AI-native server deployment and model operations toolkit
   --cliproxy-image IMAGE          CliproxyAPI Docker 镜像
   --db-type TYPE                  postgresql | mysql
   --newapi-image IMAGE            New-API Docker 镜像
+  --git-name NAME                 用户明确确认的 Git 提交名称
+  --git-email EMAIL               用户明确确认的 Git 提交邮箱
+  --git-machine-role ROLE         workstation | server
+  --git-scope SCOPE               global | repository
+  --git-repo-dir DIR              repository 作用域的仓库目录
+  --git-target-user USER          Git/gh 所属的系统用户
+  --gh-auth-mode MODE             web | skip
   --admin-password VALUE          CliproxyAPI 管理密码；省略则自动生成
   --yes                           apply 时确认执行计划
 
@@ -1361,6 +1465,7 @@ Profile 示例:
   HAO_CONFIRM_APPLY="yes"
 
 说明:
+  git-github 必须显式选择，不包含在 --services all 中；姓名和邮箱永不自动推导。
   plan/preflight/status/doctor/inventory 不执行安装。apply 只接受明确参数或 profile，
   并且需要 --yes 或 HAO_CONFIRM_APPLY=yes 才会真正修改系统。
 EOF
@@ -1382,6 +1487,7 @@ normalize_service_id() {
         maintenance|maint|baseline) echo "$SVC_MAINTENANCE" ;;
         nginx) echo "$SVC_NGINX" ;;
         docker|compose) echo "$SVC_DOCKER" ;;
+        git-github|gitgithub|git-gh|github|gh|git) echo "$SVC_GITGITHUB" ;;
         cliproxy|cliproxyapi|cpa|cli-proxy-api) echo "$SVC_CLIPROXY" ;;
         newapi|new-api) echo "$SVC_NEWAPI" ;;
         pi|pi-coding-agent|coding-agent) echo "$SVC_PI" ;;
@@ -1536,6 +1642,34 @@ parse_cli_args() {
                 NEWAPI_IMAGE="${2:-}"
                 shift 2
                 ;;
+            --git-name)
+                GIT_NAME="${2:-}"
+                shift 2
+                ;;
+            --git-email)
+                GIT_EMAIL="${2:-}"
+                shift 2
+                ;;
+            --git-machine-role)
+                GIT_MACHINE_ROLE="${2:-}"
+                shift 2
+                ;;
+            --git-scope)
+                GIT_SCOPE="${2:-}"
+                shift 2
+                ;;
+            --git-repo-dir)
+                GIT_REPO_DIR="${2:-}"
+                shift 2
+                ;;
+            --git-target-user)
+                GIT_TARGET_USER="${2:-}"
+                shift 2
+                ;;
+            --gh-auth-mode)
+                GH_AUTH_MODE="${2:-}"
+                shift 2
+                ;;
             --admin-password)
                 ADMIN_PASSWORD="${2:-}"
                 shift 2
@@ -1566,6 +1700,13 @@ parse_cli_args() {
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-${HAO_ADMIN_PASSWORD:-}}"
     CLI_CLIPROXY_DOMAIN="${CLI_CLIPROXY_DOMAIN:-${HAO_CLIPROXY_DOMAIN:-}}"
     CLI_NEWAPI_DOMAIN="${CLI_NEWAPI_DOMAIN:-${HAO_NEWAPI_DOMAIN:-}}"
+    GIT_NAME="${GIT_NAME:-${HAO_GIT_NAME:-}}"
+    GIT_EMAIL="${GIT_EMAIL:-${HAO_GIT_EMAIL:-}}"
+    GIT_MACHINE_ROLE="${GIT_MACHINE_ROLE:-${HAO_GIT_MACHINE_ROLE:-}}"
+    GIT_SCOPE="${GIT_SCOPE:-${HAO_GIT_SCOPE:-}}"
+    GIT_REPO_DIR="${GIT_REPO_DIR:-${HAO_GIT_REPO_DIR:-}}"
+    GIT_TARGET_USER="${GIT_TARGET_USER:-${HAO_GIT_TARGET_USER:-}}"
+    GH_AUTH_MODE="${GH_AUTH_MODE:-${HAO_GH_AUTH_MODE:-web}}"
 
     if [ "${HAO_CONFIRM_APPLY:-}" = "yes" ]; then
         CLI_ASSUME_YES=true
@@ -1588,7 +1729,7 @@ select_cli_services() {
         [ -z "$item" ] && continue
         svc="$(normalize_service_id "$item")" || exit 1
         if [ "$svc" = "all" ]; then
-            for svc in "${ALL_SERVICES[@]}"; do
+            for svc in "${DEFAULT_ALL_SERVICES[@]}"; do
                 TO_INSTALL[$svc]=true
             done
             return 0
@@ -1625,6 +1766,42 @@ validate_cli_config() {
             exit 1
             ;;
     esac
+
+    if [ "${TO_INSTALL[$SVC_GITGITHUB]:-}" = "true" ]; then
+        [ -n "$GIT_NAME" ] || { echo "[ERROR] git-github 需要 --git-name 或 HAO_GIT_NAME；不会自动推导姓名。" >&2; exit 1; }
+        [ -n "$GIT_EMAIL" ] || { echo "[ERROR] git-github 需要 --git-email 或 HAO_GIT_EMAIL；不会自动推导邮箱。" >&2; exit 1; }
+        [[ "$GIT_NAME" != *$'\n'* && "$GIT_NAME" != *$'\r'* ]] \
+            || { echo "[ERROR] Git 姓名不能包含换行。" >&2; exit 1; }
+        [[ "$GIT_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] \
+            || { echo "[ERROR] Git 邮箱格式无效。" >&2; exit 1; }
+        case "$GIT_MACHINE_ROLE" in
+            workstation|server) ;;
+            *) echo "[ERROR] git-github 需要 --git-machine-role workstation|server。" >&2; exit 1 ;;
+        esac
+        case "$GIT_SCOPE" in
+            global) ;;
+            repository)
+                [ -n "$GIT_REPO_DIR" ] && [ -d "$GIT_REPO_DIR/.git" ] \
+                    || { echo "[ERROR] repository 作用域需要有效的 --git-repo-dir。" >&2; exit 1; }
+                GIT_REPO_DIR="$(cd "$GIT_REPO_DIR" && pwd -P)"
+                ;;
+            *) echo "[ERROR] git-github 需要 --git-scope global|repository。" >&2; exit 1 ;;
+        esac
+        case "$GH_AUTH_MODE" in
+            web|skip) ;;
+            *) echo "[ERROR] --gh-auth-mode 只能是 web 或 skip。" >&2; exit 1 ;;
+        esac
+        if [ -z "$GIT_TARGET_USER" ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+            GIT_TARGET_USER="$SUDO_USER"
+        fi
+        [ -n "$GIT_TARGET_USER" ] && id "$GIT_TARGET_USER" >/dev/null 2>&1 \
+            || { echo "[ERROR] 需要有效的 --git-target-user；root 环境不会猜测目标用户。" >&2; exit 1; }
+        if [ "$GIT_MACHINE_ROLE" = "server" ] && [ "$GH_AUTH_MODE" = "web" ] \
+            && [ "${HAO_GIT_ALLOW_SERVER_AUTH:-}" != "yes" ]; then
+            echo "[ERROR] 生产/管理服务器上的个人 GitHub 授权需要 HAO_GIT_ALLOW_SERVER_AUTH=yes。" >&2
+            exit 1
+        fi
+    fi
 
     if [ -z "$CLIPROXY_IMAGE" ] || [ -z "$NEWAPI_IMAGE" ]; then
         echo "[ERROR] Docker 镜像名称不能为空。" >&2
@@ -1744,6 +1921,21 @@ print_cli_plan() {
                     echo "    image: $NEWAPI_IMAGE"
                     print_image_candidates "new-api"
                     ;;
+                "$SVC_GITGITHUB")
+                    echo "    target_user: $GIT_TARGET_USER"
+                    echo "    machine_role: $GIT_MACHINE_ROLE"
+                    echo "    scope: $GIT_SCOPE"
+                    [ "$GIT_SCOPE" = "repository" ] && echo "    repository: $GIT_REPO_DIR"
+                    echo "    git_name: $GIT_NAME"
+                    echo "    git_email: $GIT_EMAIL"
+                    echo "    github_auth: $GH_AUTH_MODE"
+                    if [ "$GIT_TARGET_USER" = "root" ] && [ "$GH_AUTH_MODE" = "web" ]; then
+                        echo "    warning: GitHub credentials and SSH keys will belong to root"
+                    fi
+                    if [ "$GIT_MACHINE_ROLE" = "server" ] && [ "$GH_AUTH_MODE" = "web" ]; then
+                        echo "    risk: personal GitHub credentials will be stored for a user on this server"
+                    fi
+                    ;;
                 "$SVC_CLAUDECODE")
                     echo "    gateway: ${HAO_CC_BASE_URL:-default (api.anthropic.com)}"
                     echo "    model: ${HAO_CC_MODEL:-default}"
@@ -1765,6 +1957,10 @@ print_cli_plan() {
     echo "  - Records HAO ownership and resource hashes in /var/lib/hao/manifest.json"
     echo "  - Nginx configs are backed up before overwrite where supported"
     echo "  - Secret values are written to credential files and are not printed"
+    if [ "${TO_INSTALL[$SVC_GITGITHUB]:-}" = "true" ]; then
+        echo "  - Installs Git and gh; Git identity config remains a shared user/repository resource"
+        echo "  - Does not log in to GitHub; web/SSH authorization is a separate target-user action"
+    fi
 }
 
 report_check() {
@@ -1778,7 +1974,7 @@ report_check() {
 
 run_preflight_checks() {
     local failures=0 warnings=0 svc domain_value server_ip resolved_ips required
-    local os os_version arch
+    local os os_version arch target_home git_config_file current_name current_email
 
     os="$(detect_os)"
     os_version="$(detect_os_version_id)"
@@ -1837,6 +2033,70 @@ run_preflight_checks() {
             report_check "ok" "$(service_short_name "$svc") script" "${SVC_SCRIPT[$svc]}"
         fi
     done
+
+    if [ "${TO_INSTALL[$SVC_GITGITHUB]:-}" = "true" ]; then
+        if command -v git >/dev/null 2>&1; then
+            report_check "ok" "Git" "$(git --version)"
+        else
+            report_check "ok" "Git" "will be installed from the OS repository"
+        fi
+        if command -v gh >/dev/null 2>&1; then
+            report_check "ok" "GitHub CLI" "$(gh --version | head -1)"
+        else
+            report_check "ok" "GitHub CLI" "will be installed from the official GitHub CLI repository"
+        fi
+        report_check "ok" "Git target user" "$GIT_TARGET_USER"
+        if [ "$GIT_SCOPE" = "repository" ]; then
+            report_check "ok" "Git repository scope" "$GIT_REPO_DIR"
+            git_config_file="$GIT_REPO_DIR/.git/config"
+        else
+            report_check "ok" "Git configuration scope" "global for $GIT_TARGET_USER"
+            target_home="$(getent passwd "$GIT_TARGET_USER" | awk -F: '{print $6}')"
+            git_config_file="$target_home/.gitconfig"
+        fi
+        if command -v git >/dev/null 2>&1 && [ -r "$git_config_file" ]; then
+            current_name="$(git config --file "$git_config_file" --get user.name 2>/dev/null || true)"
+            current_email="$(git config --file "$git_config_file" --get user.email 2>/dev/null || true)"
+            if { [ -n "$current_name" ] && [ "$current_name" != "$GIT_NAME" ]; } \
+                || { [ -n "$current_email" ] && [ "$current_email" != "$GIT_EMAIL" ]; }; then
+                if [ "${HAO_GIT_ALLOW_IDENTITY_CHANGE:-}" = "yes" ]; then
+                    report_check "warn" "Existing Git identity" "different values will be replaced after explicit confirmation"
+                    warnings=$((warnings + 1))
+                else
+                    report_check "fail" "Existing Git identity" "different values; review and set HAO_GIT_ALLOW_IDENTITY_CHANGE=yes"
+                    failures=$((failures + 1))
+                fi
+            else
+                report_check "ok" "Existing Git identity" "empty or matches the confirmed values"
+            fi
+        else
+            report_check "ok" "Existing Git identity" "no readable identity file; apply performs the final conflict check"
+        fi
+        if [ -e /etc/apt/sources.list.d/github-cli.list ] \
+            && ! hao_file_is_managed /etc/apt/sources.list.d/github-cli.list; then
+            report_check "warn" "Existing GitHub CLI apt source" "untracked; apply preserves it only if it exactly matches the official entry"
+            warnings=$((warnings + 1))
+        fi
+        if [ -e /usr/local/bin/hao-github-authorize ] \
+            && ! hao_file_is_managed /usr/local/bin/hao-github-authorize; then
+            report_check "fail" "Authorization helper path" "untracked file exists and will not be overwritten"
+            failures=$((failures + 1))
+        fi
+        if [ "$GH_AUTH_MODE" = "web" ]; then
+            if [ "$GIT_TARGET_USER" = "root" ]; then
+                report_check "warn" "Root GitHub authorization" "credentials and SSH keys will be owned by root"
+                warnings=$((warnings + 1))
+            fi
+            if gh_authenticated_for_user "$GIT_TARGET_USER"; then
+                report_check "ok" "GitHub authorization" "already configured for $GIT_TARGET_USER"
+            else
+                report_check "warn" "GitHub authorization" "requires a separate interactive hao-github-authorize run as $GIT_TARGET_USER"
+                warnings=$((warnings + 1))
+            fi
+        else
+            report_check "ok" "GitHub authorization" "skipped by profile"
+        fi
+    fi
 
     if [ "${TO_INSTALL[$SVC_CLAUDECODE]:-}" = "true" ] && [ -n "${HAO_CC_TOKEN_FILE:-}" ]; then
         if [ -r "$HAO_CC_TOKEN_FILE" ]; then
@@ -1908,6 +2168,7 @@ print_cli_status() {
             "$SVC_MAINTENANCE") echo "marker: $([ -f /var/lib/hao/maintenance.installed ] && echo present || echo missing)" ;;
             "$SVC_NGINX")       echo "$(nginx -v 2>&1 | sed 's/^nginx version: //' || echo unavailable)" ;;
             "$SVC_DOCKER")      echo "$(docker --version 2>/dev/null || echo unavailable)" ;;
+            "$SVC_GITGITHUB")   echo "$(git --version 2>/dev/null || echo 'git unavailable'); $(gh --version 2>/dev/null | head -1 || echo 'gh unavailable')" ;;
             "$SVC_CLIPROXY")    echo "$(compose_running_text /opt/docker-services/cliproxyapi)" ;;
             "$SVC_NEWAPI")      echo "$(compose_running_text /opt/docker-services/new-api)" ;;
             "$SVC_PI")          echo "$(command -v pi 2>/dev/null || echo unavailable)" ;;

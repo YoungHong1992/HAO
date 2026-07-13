@@ -28,7 +28,8 @@ Official OS targets are Debian 13/12 and Ubuntu 26.04/24.04/22.04 LTS.
 ## The contract
 
 1. Clarify with the user: target services, access mode (domain/ip/http), domains,
-   database choice, deployment mode.
+   database choice, deployment mode. For `git-github`, ask for the exact Git
+   name, email, target OS user, machine role, scope, and auth mode. Never infer them.
 2. Generate a `.env` profile (or equivalent CLI flags). Only `HAO_*` variables are accepted.
 3. Run `plan`, summarize the planned system changes to the user.
 4. Run `preflight`, resolve failures before proceeding.
@@ -92,6 +93,15 @@ to the correct internal service while handling HTTPS, standard ports, WebSocket,
 and access logs. Without domains, multiple services on one IP must use different
 ports. Although direct `IP:port` access is technically possible, HAO's supported
 New-API and CliproxyAPI workflows still use Nginx as their common entry point.
+
+`git-github` is opt-in and excluded from `--services all`. Its apply step installs
+Git and the official GitHub CLI and configures only the identity values explicitly
+confirmed by the user. It does not perform account login. When `web` auth is
+selected, ask the target user to run `hao-github-authorize` afterwards;
+this uses GitHub web/device login with the SSH Git protocol. Personal authorization
+on a server requires the separate `HAO_GIT_ALLOW_SERVER_AUTH=yes` confirmation.
+Root is allowed for root-only VPS hosts, but the plan must warn that GitHub
+credentials, Git configuration, and SSH keys will then be owned by root.
 
 ## Scope of system changes (state this before apply)
 
