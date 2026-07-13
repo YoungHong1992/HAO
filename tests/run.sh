@@ -30,6 +30,9 @@ printf '== ownership state and drift ==\n'
 printf '== cli profile ==\n'
 "$ROOT_DIR/tests/test-cli-profile.sh"
 
+printf '== git and github tooling ==\n'
+"$ROOT_DIR/tests/test-git-github.sh"
+
 printf '== supported operating systems ==\n'
 "$ROOT_DIR/tests/test-supported-os.sh"
 
