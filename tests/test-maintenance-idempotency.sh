@@ -16,6 +16,7 @@ export HAO_DISABLE_SWAP=1
 
 test -f /var/lib/hao/maintenance.installed
 
-grep -q 'version=' /var/lib/hao/maintenance.installed
+grep -q 'release=' /var/lib/hao/maintenance.installed
+grep -q 'Managed by HAO' /var/lib/hao/maintenance.installed
 
 echo "Maintenance idempotency test passed."

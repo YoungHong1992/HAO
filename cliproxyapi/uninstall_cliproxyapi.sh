@@ -4,7 +4,7 @@
 ################################################################################
 #
 # CliproxyAPI 完全卸载脚本
-# 版本: v4.0.0
+# 发布标识由 HAO_RELEASE 提供
 #
 # 功能说明：
 #   - 停止并删除 Systemd 服务
@@ -34,7 +34,7 @@ WHITE='\033[1;37m'
 NC='\033[0m'
 BOLD='\033[1m'
 DIM='\033[2m'
-readonly COMMON_VERSION="4.0.0"
+readonly COMMON_VERSION="${HAO_RELEASE:-dev-standalone}"
 readonly DEPLOY_LOG_DIR="/var/log/vps-deploy"
 
 print_header() {
@@ -45,7 +45,7 @@ print_header() {
     echo "║                                                              ║"
     printf  "║           %-51s║\n" "$title"
     echo "║                                                              ║"
-    printf  "║               版本: v%-40s║\n" "${COMMON_VERSION}"
+    printf  "║           发布标识: %-40s║\n" "${COMMON_VERSION}"
     echo "║                                                              ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -608,7 +608,7 @@ get_domain_for_mode() {
 for arg in "$@"; do
     case "$arg" in
         -h|--help)
-            echo "CliproxyAPI 卸载脚本 v${COMMON_VERSION}"
+            echo "CliproxyAPI 卸载脚本 ${COMMON_VERSION}"
             echo "用法: ./uninstall_cliproxyapi.sh"
             exit 0
             ;;
@@ -620,7 +620,7 @@ check_root
 setup_logging "cliproxyapi-uninstall"
 
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${CYAN}   CliproxyAPI 卸载程序 v${COMMON_VERSION}${NC}"
+echo -e "${CYAN}   CliproxyAPI 卸载程序 ${COMMON_VERSION}${NC}"
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 

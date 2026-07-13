@@ -4,7 +4,7 @@
 ################################################################################
 #
 # New-API Docker 卸载脚本
-# 版本: v4.0.0
+# 发布标识由 HAO_RELEASE 提供
 #
 # 功能说明：
 #   1. 停止并删除所有 New-API 容器
@@ -35,7 +35,7 @@ WHITE='\033[1;37m'
 NC='\033[0m'
 BOLD='\033[1m'
 DIM='\033[2m'
-readonly COMMON_VERSION="4.0.0"
+readonly COMMON_VERSION="${HAO_RELEASE:-dev-standalone}"
 readonly DEPLOY_LOG_DIR="/var/log/vps-deploy"
 
 print_header() {
@@ -46,7 +46,7 @@ print_header() {
     echo "║                                                              ║"
     printf  "║           %-51s║\n" "$title"
     echo "║                                                              ║"
-    printf  "║               版本: v%-40s║\n" "${COMMON_VERSION}"
+    printf  "║           发布标识: %-40s║\n" "${COMMON_VERSION}"
     echo "║                                                              ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -608,7 +608,7 @@ get_domain_for_mode() {
 for arg in "$@"; do
     case "$arg" in
         -h|--help)
-            echo "New-API Docker 卸载脚本 v${COMMON_VERSION}"
+            echo "New-API Docker 卸载脚本 ${COMMON_VERSION}"
             echo "用法: ./uninstall_newapi_docker.sh"
             exit 0
             ;;
@@ -640,7 +640,7 @@ fi
 # ==================== 欢迎界面 ====================
 clear 2>/dev/null || true
 echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${RED}   New-API Docker 卸载程序 v${COMMON_VERSION}${NC}"
+echo -e "${RED}   New-API Docker 卸载程序 ${COMMON_VERSION}${NC}"
 echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo -e "${YELLOW}⚠️  警告：此操作将删除以下内容${NC}"

@@ -52,6 +52,15 @@ if ! grep -q 'image: example/new-api:v1' <<<"$plan_output"; then
   echo "Plan did not include requested New-API image" >&2
   exit 1
 fi
+if ! grep -q 'calciumion/new-api:v1.0.0-rc.21 (release-candidate)' <<<"$plan_output"; then
+  echo "Plan did not include reviewed New-API image candidates" >&2
+  exit 1
+fi
+
+if "$ROOT_DIR/hao" plan --services new-api --domain api.example.com --newapi-image 'example/new-api:latest;id' >/dev/null 2>&1; then
+  echo "Unsafe Docker image reference unexpectedly passed" >&2
+  exit 1
+fi
 
 # claude-code: plan must never print the token value
 CC_PROFILE="$TMP_DIR/cc.env"

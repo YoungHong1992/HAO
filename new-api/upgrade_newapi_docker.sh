@@ -4,7 +4,7 @@
 ################################################################################
 #
 # New-API Docker 升级脚本
-# 版本: v4.0.0
+# 发布标识由 HAO_RELEASE 提供
 #
 # 功能说明：
 #   1. 检测当前 New-API Docker 服务
@@ -34,7 +34,7 @@ WHITE='\033[1;37m'
 NC='\033[0m'
 BOLD='\033[1m'
 DIM='\033[2m'
-readonly COMMON_VERSION="4.0.0"
+readonly COMMON_VERSION="${HAO_RELEASE:-dev-standalone}"
 readonly DEPLOY_LOG_DIR="/var/log/vps-deploy"
 
 print_header() {
@@ -45,7 +45,7 @@ print_header() {
     echo "║                                                              ║"
     printf  "║           %-51s║\n" "$title"
     echo "║                                                              ║"
-    printf  "║               版本: v%-40s║\n" "${COMMON_VERSION}"
+    printf  "║           发布标识: %-40s║\n" "${COMMON_VERSION}"
     echo "║                                                              ║"
     echo "╚══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -607,7 +607,7 @@ get_domain_for_mode() {
 for arg in "$@"; do
     case "$arg" in
         -h|--help)
-            echo "New-API Docker 升级脚本 v${COMMON_VERSION}"
+            echo "New-API Docker 升级脚本 ${COMMON_VERSION}"
             echo "用法: ./upgrade_newapi_docker.sh"
             exit 0
             ;;
@@ -642,7 +642,7 @@ fi
 # ==================== 检测当前状态 ====================
 clear 2>/dev/null || true
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${CYAN}   New-API Docker 升级程序 v${COMMON_VERSION}${NC}"
+echo -e "${CYAN}   New-API Docker 升级程序 ${COMMON_VERSION}${NC}"
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
@@ -758,7 +758,7 @@ fi
 clear 2>/dev/null || true
 echo -e "${GREEN}"
 echo "================================================"
-echo "       New-API 升级完成！(v${COMMON_VERSION})"
+echo "       New-API 升级完成！(${COMMON_VERSION})"
 echo "================================================"
 echo -e "${NC}"
 echo -e "旧镜像: ${YELLOW}${CURRENT_IMAGE:0:12}${NC}"

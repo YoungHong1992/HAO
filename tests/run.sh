@@ -21,8 +21,17 @@ printf '== common and crypto helpers ==\n'
 printf '== credentials helpers ==\n'
 "$ROOT_DIR/tests/test-credentials.sh"
 
+printf '== release identity ==\n'
+"$ROOT_DIR/tests/test-release-identity.sh"
+
+printf '== ownership state and drift ==\n'
+"$ROOT_DIR/tests/test-state.sh"
+
 printf '== cli profile ==\n'
 "$ROOT_DIR/tests/test-cli-profile.sh"
+
+printf '== supported operating systems ==\n'
+"$ROOT_DIR/tests/test-supported-os.sh"
 
 printf '== generic skills ==\n'
 "$ROOT_DIR/tests/test-generic-skills.sh"
@@ -42,5 +51,6 @@ printf '== smoke ==\n'
 "$ROOT_DIR/hao" plan --services pi >/dev/null
 "$ROOT_DIR/hao" status >/dev/null
 "$ROOT_DIR/hao" doctor --services pi >/dev/null
+"$ROOT_DIR/hao" inventory >/dev/null
 
 printf 'All tests passed.\n'

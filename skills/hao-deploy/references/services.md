@@ -42,3 +42,15 @@ Already installed dependencies are detected and skipped unless selected directly
 - `HAO_CONFIRM_APPLY`: set to `yes` only after user confirmation
 
 Only `HAO_*` variables are supported.
+
+Docker images default to `latest`. The CLI plan also reads `config/image-candidates.tsv`
+and prints two reviewed fixed-tag alternatives. At the 2026-07-13 review, CliproxyAPI
+offers `v7.2.71` and `v7.2.70` as stable candidates; New-API offers
+`v1.0.0-rc.21` and `v1.0.0-rc.20` as release-candidate builds.
+
+## Supported operating systems
+
+- Debian 13 and 12
+- Ubuntu 26.04, 24.04, and 22.04 LTS
+
+Other versions fail HAO preflight and are not release-qualified.

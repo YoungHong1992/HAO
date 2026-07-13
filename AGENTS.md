@@ -16,10 +16,14 @@ cd hao
 sudo ./hao apply --profile deploy.env --yes              # mutates the system; ONLY after user confirms
 ./hao status                                             # read-only: what is installed
 ./hao doctor --profile deploy.env                        # read-only: status + preflight diagnostics
+./hao inventory                                          # read-only: HAO ownership manifest
 ```
 
 `apply` refuses to change anything without `--yes` (or `HAO_CONFIRM_APPLY=yes`)
 and requires root. Everything else is safe to run for exploration.
+
+Official OS targets are Debian 13/12 and Ubuntu 26.04/24.04/22.04 LTS.
+`preflight` rejects releases outside this matrix.
 
 ## The contract
 
@@ -34,6 +38,11 @@ and requires root. Everything else is safe to run for exploration.
 Never print secret values. Secrets are written to credential files; report the
 file path, not the content.
 
+After deployment, use `inventory` and `doctor` to inspect ownership and drift.
+Treat `managed` resources as HAO-owned, `shared` and `observed` resources as
+externally owned, and untracked existing configuration as preserve-by-default.
+Never overwrite a drifted or untracked production resource without explicit review.
+
 ## Where the knowledge lives
 
 | You want to know | Read |
@@ -43,6 +52,7 @@ file path, not the content.
 | What requires confirmation, high-risk areas, secret handling | `skills/hao-deploy/references/safety.md` |
 | Per-component details | `<component>/README.md` (e.g. `new-api/README.md`) |
 | Human-facing overview | `README.md` |
+| Release gates and real-VM acceptance | `docs/releasing.md` |
 
 ## Installing the skill into an agent runtime (optional)
 
@@ -70,8 +80,18 @@ HAO_DB_TYPE="postgresql"        # postgresql | mysql
 # HAO_CONFIRM_APPLY="yes"       # set only after the user confirmed the plan
 ```
 
+Docker services default to `latest`. Before presenting a plan, include the two fixed
+image candidates printed by `hao plan`; do not describe a New-API RC as stable.
+
 When deploying multiple web services at once, give each its own domain
 (`HAO_CLIPROXY_DOMAIN`, `HAO_NEWAPI_DOMAIN`); they cannot share one Nginx `server_name`.
+
+When explaining Nginx to a non-technical user, describe it as the server's
+"operator and gatekeeper": requests arrive at Nginx first, and it routes each one
+to the correct internal service while handling HTTPS, standard ports, WebSocket,
+and access logs. Without domains, multiple services on one IP must use different
+ports. Although direct `IP:port` access is technically possible, HAO's supported
+New-API and CliproxyAPI workflows still use Nginx as their common entry point.
 
 ## Scope of system changes (state this before apply)
 
