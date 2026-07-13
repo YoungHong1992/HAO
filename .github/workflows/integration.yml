@@ -5,7 +5,12 @@ on:
   pull_request:
     paths:
       - 'maintenance/**'
+      - 'new-api/**'
+      - 'lib/**'
+      - 'install.sh'
       - 'tests/test-maintenance-idempotency.sh'
+      - 'tests/test-apply-safety.sh'
+      - 'tests/test-newapi-idempotency.sh'
       - '.github/workflows/integration.yml'
 
 jobs:
@@ -24,3 +29,29 @@ jobs:
         if: always()
         run: |
           sudo test -f /var/lib/hao/maintenance.installed && sudo cat /var/lib/hao/maintenance.installed || true
+
+  newapi-idempotency:
+    name: New-API ${{ matrix.database }} two-apply idempotency
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        database: [postgresql, mysql]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run two apply operations and an explicit upgrade
+        run: sudo ./tests/test-newapi-idempotency.sh "${{ matrix.database }}"
+
+  ownership-safety:
+    name: Apply ownership safety gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify apply stops before drift or untracked overwrites
+        run: sudo ./tests/test-apply-safety.sh

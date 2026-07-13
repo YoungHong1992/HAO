@@ -15,10 +15,12 @@ New-API 是新一代大模型网关与 AI 资产管理系统，支持 OpenAI、C
 ## 快速部署
 
 ```bash
-cd new-api
-chmod +x install.sh
-sudo ./install.sh
+./hao plan --services new-api --domain api.example.com
+./hao preflight --services new-api --domain api.example.com
+sudo ./hao apply --services new-api --domain api.example.com --yes
 ```
+
+重复执行相同的 `ensure`（默认动作）是 no-op，不会轮换数据库、Redis 或 Session 密钥。
 
 ### 前置条件
 
@@ -63,9 +65,14 @@ docker compose restart
 ## 升级
 
 ```bash
-./upgrade_newapi_docker.sh       # 正式版
-./upgrade_newapi_alpha.sh        # Alpha 预览版
+./hao plan --services new-api --domain api.example.com --newapi-action upgrade
+sudo ./hao apply --services new-api --domain api.example.com --newapi-action upgrade --yes
 ```
+
+显式升级会从现有 Compose 复用全部密钥，并且只能保持当前数据库引擎。
+PostgreSQL/MySQL 之间的数据迁移不是普通升级；`migrate-db` 动作会明确拒绝自动执行，
+以免用一个空数据库替代真实迁移。旧的独立升级脚本保留用于人工维护，但不属于根 CLI
+的可审计升级路径。
 
 ## 卸载
 

@@ -44,7 +44,8 @@ show_help() {
 New-API Docker 部署脚本
 
 用法:
-  ./install.sh       # 交互式部署
+  ./install.sh       # 首次部署；已有部署默认 no-op
+  HAO_NEWAPI_ACTION=upgrade ./install.sh  # 显式同数据库引擎升级
   ./install.sh -h    # 显示此帮助
 
 功能:
@@ -52,6 +53,7 @@ New-API Docker 部署脚本
   - 支持域名/IP/HTTP 三种访问模式
   - 自动申请 Let's Encrypt 证书
   - Nginx 反向代理 + HTTP/3 支持
+  - upgrade 复用现有密钥；migrate-db 不执行自动跨引擎迁移
 
 前置条件:
   - 已安装 Docker (../docker/install.sh)
@@ -68,15 +70,80 @@ for arg in "$@"; do
 done
 
 # ==================== 全局配置 ====================
-NEWAPI_PORT=3000
-CONF_D="/etc/nginx/conf.d"
-SSL_DIR="/etc/nginx/ssl"
-DOCKER_ROOT="/opt/docker-services"
+NEWAPI_PORT="${HAO_NEWAPI_PORT:-3000}"
+CONF_D="${HAO_NGINX_CONF_DIR:-/etc/nginx/conf.d}"
+SSL_DIR="${HAO_NGINX_SSL_DIR:-/etc/nginx/ssl}"
+DOCKER_ROOT="${HAO_DOCKER_ROOT:-/opt/docker-services}"
 SERVICE_DIR="$DOCKER_ROOT/new-api"
 DATA_DIR="$SERVICE_DIR/data"
 LOGS_DIR="$SERVICE_DIR/logs"
 DOCKER_IMAGE="${HAO_NEWAPI_IMAGE:-calciumion/new-api:latest}"
-DOCKER_NETWORK="ai-services"
+DOCKER_NETWORK="${HAO_DOCKER_NETWORK:-ai-services}"
+NEWAPI_ACTION="${HAO_NEWAPI_ACTION:-ensure}"
+EXISTING_COMPOSE="$SERVICE_DIR/docker-compose.yml"
+
+normalize_newapi_action() {
+    case "${1,,}" in
+        ensure|install) echo "ensure" ;;
+        upgrade) echo "upgrade" ;;
+        migrate-db|migrate|database-migration) echo "migrate-db" ;;
+        *)
+            log_error "HAO_NEWAPI_ACTION 只能是 ensure、upgrade 或 migrate-db，当前: $1"
+            return 1
+            ;;
+    esac
+}
+
+detect_existing_db_type() {
+    local compose_file="$1"
+    if grep -qE '^[[:space:]]+postgres:' "$compose_file" 2>/dev/null; then
+        echo "postgresql"
+    elif grep -qE '^[[:space:]]+mysql:' "$compose_file" 2>/dev/null; then
+        echo "mysql"
+    else
+        echo "unknown"
+    fi
+}
+
+extract_existing_secrets() {
+    local compose_file="$1"
+
+    if [ "$EXISTING_DB_TYPE" = "postgresql" ]; then
+        DB_PASSWORD="$(sed -n 's|.*SQL_DSN=postgresql://newapi:\([^@]*\)@postgres:.*|\1|p' "$compose_file" | head -1)"
+    else
+        DB_PASSWORD="$(sed -n 's|.*SQL_DSN=newapi:\([^@]*\)@tcp(mysql:.*|\1|p' "$compose_file" | head -1)"
+    fi
+    REDIS_PASSWORD="$(sed -n 's|.*REDIS_CONN_STRING=redis://:\([^@]*\)@redis:.*|\1|p' "$compose_file" | head -1)"
+    SESSION_SECRET="$(sed -n 's|.*SESSION_SECRET=\(.*\)$|\1|p' "$compose_file" | head -1)"
+
+    if [ -z "$DB_PASSWORD" ] || [ -z "$REDIS_PASSWORD" ] || [ -z "$SESSION_SECRET" ]; then
+        log_error "无法从现有 Compose 安全恢复全部密钥，已拒绝升级以避免凭据轮换。"
+        log_info "请检查: $compose_file"
+        return 1
+    fi
+}
+
+NEWAPI_ACTION="$(normalize_newapi_action "$NEWAPI_ACTION")" || exit 1
+EXISTING_DB_TYPE="unknown"
+if [ -f "$EXISTING_COMPOSE" ]; then
+    EXISTING_DB_TYPE="$(detect_existing_db_type "$EXISTING_COMPOSE")"
+    case "$NEWAPI_ACTION" in
+        ensure)
+            echo "New-API 已部署；默认 ensure 动作为 no-op。"
+            echo "如需刷新镜像/配置，请显式设置 HAO_NEWAPI_ACTION=upgrade。"
+            exit 0
+            ;;
+        migrate-db)
+            log_error "HAO 不自动执行 PostgreSQL/MySQL 跨引擎数据迁移。"
+            log_info "请先完成独立备份、迁移和回滚方案，再由专用迁移流程处理；当前部署未改变。"
+            exit 1
+            ;;
+        upgrade) ;;
+    esac
+elif [ "$NEWAPI_ACTION" != "ensure" ]; then
+    log_error "New-API 尚未部署，不能执行 $NEWAPI_ACTION；请使用 ensure 完成首次安装。"
+    exit 1
+fi
 
 # ==================== 环境检查 ====================
 check_root
@@ -122,14 +189,8 @@ echo -e "${CYAN}   New-API Docker 部署程序 ${COMMON_VERSION}${NC}"
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
-if [ -f "$SERVICE_DIR/docker-compose.yml" ]; then
-    log_warning "检测到已安装 New-API"
-    if ! is_noninteractive; then
-        if ! confirm "是否覆盖安装？"; then
-            log_info "安装已取消。"
-            exit 0
-        fi
-    fi
+if [ -f "$EXISTING_COMPOSE" ]; then
+    log_warning "检测到已安装 New-API；本次为显式 upgrade。"
 fi
 
 # ==================== 交互输入 ====================
@@ -209,12 +270,27 @@ fi
 log_info "已选择: $DB_TYPE"
 echo ""
 
-# 使用安全随机生成密码
-log_info "正在生成安全随机密码..."
-DB_PASSWORD=$(generate_password 32)
-REDIS_PASSWORD=$(generate_password 32)
-SESSION_SECRET=$(generate_session_secret 48)
-log_success "密码已生成（将保存到凭据文件，不会输出到日志）"
+# 首次安装生成密钥；显式升级必须复用现有密钥。
+REQUESTED_DB_TYPE="$([ "$USE_POSTGRESQL" = true ] && echo postgresql || echo mysql)"
+if [ "$NEWAPI_ACTION" = "upgrade" ]; then
+    if [ "$EXISTING_DB_TYPE" = "unknown" ]; then
+        log_error "无法识别现有数据库类型，已拒绝升级。"
+        exit 1
+    fi
+    if [ "$REQUESTED_DB_TYPE" != "$EXISTING_DB_TYPE" ]; then
+        log_error "升级不能把数据库从 $EXISTING_DB_TYPE 改为 $REQUESTED_DB_TYPE。"
+        log_info "数据库迁移必须使用独立、显式且可回滚的迁移流程；当前部署未改变。"
+        exit 1
+    fi
+    extract_existing_secrets "$EXISTING_COMPOSE" || exit 1
+    log_success "已复用现有数据库、Redis 和 Session 密钥（值不会输出到日志）"
+else
+    log_info "正在生成安全随机密码..."
+    DB_PASSWORD=$(generate_password 32)
+    REDIS_PASSWORD=$(generate_password 32)
+    SESSION_SECRET=$(generate_session_secret 48)
+    log_success "密码已生成（将保存到凭据文件，不会输出到日志）"
+fi
 echo ""
 
 # 确认
@@ -244,6 +320,10 @@ log_success "目录创建完成"
 
 # ==================== 生成 docker-compose.yml ====================
 log_step "[3/8] 生成 Docker Compose 配置..."
+
+if [ "$NEWAPI_ACTION" = "upgrade" ]; then
+    backup_file "$EXISTING_COMPOSE"
+fi
 
 if [ "$USE_POSTGRESQL" = true ]; then
     cat > "$SERVICE_DIR/docker-compose.yml" <<COMPOSE_EOF

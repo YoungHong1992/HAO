@@ -15,7 +15,7 @@ NC='\033[0m'
 BOLD='\033[1m'
 DIM='\033[2m'
 readonly COMMON_VERSION="${HAO_RELEASE:-dev-standalone}"
-readonly DEPLOY_LOG_DIR="/var/log/vps-deploy"
+readonly DEPLOY_LOG_DIR="${HAO_DEPLOY_LOG_DIR:-/var/log/vps-deploy}"
 
 print_header() {
     local title="${1:-部署工具}"

@@ -221,7 +221,7 @@ NC='\033[0m'
 BOLD='\033[1m'
 DIM='\033[2m'
 readonly COMMON_VERSION="$RELEASE_ID"
-readonly DEPLOY_LOG_DIR="/var/log/vps-deploy"
+readonly DEPLOY_LOG_DIR="${HAO_DEPLOY_LOG_DIR:-/var/log/vps-deploy}"
 
 print_header() {
     local title="${1:-部署工具}"
@@ -866,6 +866,9 @@ DOMAIN=""                     # single Web service IP/domain fallback
 ADMIN_PASSWORD=""              # cliproxyapi
 CLIPROXY_DEPLOY_MODE="docker"  # docker | bare
 DB_TYPE="postgresql"           # newapi
+DB_TYPE_EXPLICIT=false
+NEWAPI_ACTION="ensure"         # ensure | upgrade | migrate-db
+NEWAPI_EXISTING_DB_TYPE=""
 CLIPROXY_IMAGE=""
 NEWAPI_IMAGE=""
 GIT_NAME=""
@@ -875,6 +878,8 @@ GIT_SCOPE=""
 GIT_REPO_DIR=""
 GIT_TARGET_USER=""
 GH_AUTH_MODE=""
+ALLOW_MANAGED_DRIFT=false
+ALLOW_UNTRACKED_OVERWRITE=false
 
 # ==================== 单轮状态重置 ====================
 
@@ -890,8 +895,11 @@ reset_iteration_state() {
     ACCESS_MODE=""
     DOMAIN=""
     ADMIN_PASSWORD=""
-    CLIPROXY_DEPLOY_MODE="docker"
-    DB_TYPE="postgresql"
+    CLIPROXY_DEPLOY_MODE=""
+    DB_TYPE=""
+    DB_TYPE_EXPLICIT=false
+    NEWAPI_ACTION=""
+    NEWAPI_EXISTING_DB_TYPE=""
     CLIPROXY_IMAGE=""
     NEWAPI_IMAGE=""
     GIT_NAME=""
@@ -901,12 +909,34 @@ reset_iteration_state() {
     GIT_REPO_DIR=""
     GIT_TARGET_USER=""
     GH_AUTH_MODE=""
+    ALLOW_MANAGED_DRIFT=false
+    ALLOW_UNTRACKED_OVERWRITE=false
 
     # CliproxyAPI 默认 Docker Compose；裸机选择只在当前轮生效。
     SVC_DEPENDS[$SVC_CLIPROXY]="$SVC_NGINX $SVC_DOCKER"
 }
 
 # ==================== 服务检测 ====================
+
+newapi_service_dir() {
+    printf '%s/new-api' "${HAO_DOCKER_ROOT:-/opt/docker-services}"
+}
+
+newapi_compose_file() {
+    printf '%s/docker-compose.yml' "$(newapi_service_dir)"
+}
+
+detect_newapi_db_type() {
+    local compose_file
+    compose_file="$(newapi_compose_file)"
+    if grep -qE '^[[:space:]]+postgres:' "$compose_file" 2>/dev/null; then
+        echo "postgresql"
+    elif grep -qE '^[[:space:]]+mysql:' "$compose_file" 2>/dev/null; then
+        echo "mysql"
+    else
+        echo "unknown"
+    fi
+}
 
 detect_installed_services() {
     ALREADY_INSTALLED=()
@@ -949,7 +979,7 @@ detect_installed_services() {
                 fi
                 ;;
             "$SVC_NEWAPI")
-                if [ -f /opt/docker-services/new-api/docker-compose.yml ]; then
+                if [ -f "$(newapi_compose_file)" ]; then
                     ALREADY_INSTALLED[$svc]=true
                 fi
                 ;;
@@ -1094,10 +1124,26 @@ is_web_service() {
     esac
 }
 
+service_will_mutate() {
+    local svc="$1"
+    if [ "${ALREADY_INSTALLED[$svc]:-}" = "true" ]; then
+        case "$svc" in
+            "$SVC_NEWAPI")
+                [ "$NEWAPI_ACTION" = "ensure" ] && return 1
+                ;;
+            "$SVC_NGINX"|"$SVC_DOCKER")
+                # Their unattended installers already treat a healthy installation as no-op.
+                return 1
+                ;;
+        esac
+    fi
+    return 0
+}
+
 needs_access_mode() {
     local svc
     for svc in "${INSTALL_ORDER[@]}"; do
-        if is_web_service "$svc" \
+        if is_web_service "$svc" && service_will_mutate "$svc" \
             && { [ "${ALREADY_INSTALLED[$svc]:-}" != "true" ] || [ "${FORCE_INSTALL[$svc]:-}" = "true" ]; }; then
             return 0
         fi
@@ -1105,15 +1151,18 @@ needs_access_mode() {
     return 1
 }
 
-# ==================== 安装执行 ====================
+# ==================== 资源所有权与安装执行 ====================
 
-record_service_management_state() {
-    local svc="$1" path domain_value binary target_home public_key
-    local -a candidates=() resources=()
+collect_service_resource_candidates() {
+    local svc="$1" output_name="$2" domain_value binary target_home public_key
+    local docker_root="${HAO_DOCKER_ROOT:-/opt/docker-services}"
+    local nginx_conf_dir="${HAO_NGINX_CONF_DIR:-/etc/nginx/conf.d}"
+    local -n output="$output_name"
+    output=()
 
     case "$svc" in
         "$SVC_MAINTENANCE")
-            candidates+=(
+            output+=(
                 "auto:/var/lib/hao/maintenance.installed"
                 "auto:/etc/fail2ban/jail.d/hao-sshd.local"
                 "auto:/etc/sysctl.d/99-hao-swap.conf"
@@ -1123,7 +1172,7 @@ record_service_management_state() {
             )
             ;;
         "$SVC_NGINX")
-            candidates+=(
+            output+=(
                 "auto:/etc/nginx/nginx.conf"
                 "auto:/etc/sysctl.d/99-vps-optimize.conf"
                 "auto:/etc/systemd/system/nginx.service.d/limits.conf"
@@ -1132,73 +1181,159 @@ record_service_management_state() {
                 "auto:/etc/security/limits.d/90-hao-nofile.conf"
             )
             binary="$(command -v nginx 2>/dev/null || true)"
-            [ -n "$binary" ] && candidates+=("observed:$binary")
+            [ -n "$binary" ] && output+=("observed:$binary")
             ;;
         "$SVC_DOCKER")
-            candidates+=(
+            output+=(
                 "auto:/etc/apt/sources.list.d/docker.list"
                 "observed:/etc/apt/keyrings/docker.gpg"
                 "shared:/etc/docker/daemon.json"
             )
             binary="$(command -v docker 2>/dev/null || true)"
-            [ -n "$binary" ] && candidates+=("observed:$binary")
+            [ -n "$binary" ] && output+=("observed:$binary")
             ;;
         "$SVC_GITGITHUB")
-            candidates+=(
+            output+=(
                 "auto:/etc/apt/sources.list.d/github-cli.list"
                 "observed:/etc/apt/keyrings/githubcli-archive-keyring.gpg"
                 "auto:/usr/local/bin/hao-github-authorize"
             )
             binary="$(command -v git 2>/dev/null || true)"
-            [ -n "$binary" ] && candidates+=("observed:$binary")
+            [ -n "$binary" ] && output+=("observed:$binary")
             binary="$(command -v gh 2>/dev/null || true)"
-            [ -n "$binary" ] && candidates+=("observed:$binary")
+            [ -n "$binary" ] && output+=("observed:$binary")
             target_home="$(getent passwd "$GIT_TARGET_USER" | awk -F: '{print $6}')"
             if [ "$GIT_SCOPE" = "repository" ]; then
-                candidates+=("shared:$GIT_REPO_DIR/.git/config")
+                output+=("shared:$GIT_REPO_DIR/.git/config")
             else
-                [ -n "$target_home" ] && candidates+=("shared:$target_home/.gitconfig")
+                [ -n "$target_home" ] && output+=("shared:$target_home/.gitconfig")
             fi
             if [ -n "${target_home:-}" ] && [ -d "$target_home/.ssh" ]; then
                 for public_key in "$target_home"/.ssh/*.pub; do
-                    [ -f "$public_key" ] && candidates+=("observed:$public_key")
+                    [ -f "$public_key" ] && output+=("observed:$public_key")
                 done
             fi
             ;;
         "$SVC_CLIPROXY")
             if [ "$CLIPROXY_DEPLOY_MODE" = "docker" ]; then
-                candidates+=(
-                    "auto:/opt/docker-services/cliproxyapi/docker-compose.yml"
-                    "secret:/opt/docker-services/cliproxyapi/config.yaml"
-                    "secret:/opt/docker-services/cliproxyapi/hao-credentials.txt"
+                output+=(
+                    "auto:$docker_root/cliproxyapi/docker-compose.yml"
+                    "secret:$docker_root/cliproxyapi/config.yaml"
+                    "secret:$docker_root/cliproxyapi/hao-credentials.txt"
                 )
             else
-                candidates+=(
+                output+=(
                     "secret:/etc/cliproxyapi/config.yaml"
                     "auto:/etc/systemd/system/cliproxyapi.service"
                     "secret:/opt/cliproxyapi/hao-credentials.txt"
                 )
             fi
             domain_value="${SERVICE_DOMAIN[$svc]:-}"
-            [ -n "$domain_value" ] && candidates+=("auto:/etc/nginx/conf.d/${domain_value}.conf")
+            [ -n "$domain_value" ] && output+=("auto:$nginx_conf_dir/${domain_value}.conf")
             ;;
         "$SVC_NEWAPI")
-            candidates+=(
-                "auto:/opt/docker-services/new-api/docker-compose.yml"
-                "secret:/opt/docker-services/new-api/hao-credentials.txt"
+            output+=(
+                "auto:$docker_root/new-api/docker-compose.yml"
+                "secret:$docker_root/new-api/hao-credentials.txt"
             )
             domain_value="${SERVICE_DOMAIN[$svc]:-}"
-            [ -n "$domain_value" ] && candidates+=("auto:/etc/nginx/conf.d/${domain_value}.conf")
+            [ -n "$domain_value" ] && output+=("auto:$nginx_conf_dir/${domain_value}.conf")
             ;;
         "$SVC_PI")
             binary="$(command -v pi 2>/dev/null || true)"
-            [ -n "$binary" ] && candidates+=("managed:$binary")
+            [ -n "$binary" ] && output+=("managed:$binary")
             ;;
         "$SVC_CLAUDECODE")
             binary="$(command -v claude 2>/dev/null || true)"
-            [ -n "$binary" ] && candidates+=("managed:$binary")
+            [ -n "$binary" ] && output+=("managed:$binary")
             ;;
     esac
+}
+
+resource_is_managed_by_service() {
+    local svc="$1" path="$2" resources_file
+    resources_file="$HAO_STATE_DIR/services/${svc}.resources"
+    [ -r "$resources_file" ] || return 1
+    awk -F '\t' -v path="$path" '$1 == "managed" && $3 == path { found=1 } END { exit found ? 0 : 1 }' "$resources_file"
+}
+
+check_service_managed_drift() {
+    local svc="$1" resources_file
+    local ownership expected path actual found=0
+    MANAGED_DRIFT_COUNT=0
+    resources_file="$HAO_STATE_DIR/services/${svc}.resources"
+    [ -r "$resources_file" ] || return 0
+    while IFS=$'\t' read -r ownership expected path; do
+        [ "$ownership" = "managed" ] || continue
+        if [ ! -e "$path" ]; then
+            report_check "$([ "$ALLOW_MANAGED_DRIFT" = true ] && echo warn || echo fail)" \
+                "Managed drift $svc" "missing $path"
+            found=1
+            MANAGED_DRIFT_COUNT=$((MANAGED_DRIFT_COUNT + 1))
+            continue
+        fi
+        actual="$(hao_resource_hash "$path" "$ownership")"
+        if [ "$actual" != "$expected" ]; then
+            report_check "$([ "$ALLOW_MANAGED_DRIFT" = true ] && echo warn || echo fail)" \
+                "Managed drift $svc" "modified $path"
+            found=1
+            MANAGED_DRIFT_COUNT=$((MANAGED_DRIFT_COUNT + 1))
+        fi
+    done < "$resources_file"
+
+    [ "$found" -eq 0 ] || [ "$ALLOW_MANAGED_DRIFT" = true ]
+}
+
+run_apply_resource_safety_checks() {
+    local svc entry ownership path failures=0
+    local -a candidates=()
+    local -A seen_untracked=()
+    RESOURCE_SAFETY_FAILURES=0
+    RESOURCE_SAFETY_WARNINGS=0
+
+    for svc in "${INSTALL_ORDER[@]}"; do
+        if ! check_service_managed_drift "$svc"; then
+            failures=$((failures + 1))
+        fi
+        if [ "${MANAGED_DRIFT_COUNT:-0}" -gt 0 ]; then
+            if [ "$ALLOW_MANAGED_DRIFT" = true ]; then
+                RESOURCE_SAFETY_WARNINGS=$((RESOURCE_SAFETY_WARNINGS + MANAGED_DRIFT_COUNT))
+            else
+                RESOURCE_SAFETY_FAILURES=$((RESOURCE_SAFETY_FAILURES + MANAGED_DRIFT_COUNT))
+            fi
+        fi
+
+        # Untracked targets only conflict when this operation would write them.
+        service_will_mutate "$svc" || continue
+
+        collect_service_resource_candidates "$svc" candidates
+        for entry in "${candidates[@]}"; do
+            ownership="${entry%%:*}"
+            path="${entry#*:}"
+            [ "$ownership" = "auto" ] || continue
+            [ -e "$path" ] || continue
+            resource_is_managed_by_service "$svc" "$path" && continue
+            [ -z "${seen_untracked[$path]:-}" ] || continue
+            seen_untracked[$path]=1
+            if [ "$ALLOW_UNTRACKED_OVERWRITE" = true ]; then
+                report_check "warn" "Untracked target" "$path; overwrite separately confirmed"
+                RESOURCE_SAFETY_WARNINGS=$((RESOURCE_SAFETY_WARNINGS + 1))
+            else
+                report_check "fail" "Untracked target" "$path; set HAO_ALLOW_UNTRACKED_OVERWRITE=yes only after review"
+                failures=$((failures + 1))
+                RESOURCE_SAFETY_FAILURES=$((RESOURCE_SAFETY_FAILURES + 1))
+            fi
+        done
+    done
+
+    [ "$failures" -eq 0 ]
+}
+
+record_service_management_state() {
+    local svc="$1" path
+    local -a candidates=() resources=()
+
+    collect_service_resource_candidates "$svc" candidates
 
     for path in "${candidates[@]}"; do
         local ownership="${path%%:*}"
@@ -1233,6 +1368,13 @@ run_install() {
         local name="${SVC_NAME[$svc]}"
 
         print_section "[$current/$total] 安装 $name"
+
+        if [ "$svc" = "$SVC_NEWAPI" ] && ! service_will_mutate "$svc"; then
+            log_success "$name 已存在；默认 ensure 为 no-op，现有配置、数据卷和密钥均保持不变"
+            INSTALL_RESULTS+=("✓ $name — no-op")
+            echo ""
+            continue
+        fi
 
         local dep dep_failed=false
         for dep in ${SVC_DEPENDS[$svc]}; do
@@ -1282,6 +1424,7 @@ run_install() {
             "$SVC_NEWAPI")
                 extra_env+=("HAO_DB_TYPE=$DB_TYPE")
                 extra_env+=("HAO_NEWAPI_IMAGE=$NEWAPI_IMAGE")
+                extra_env+=("HAO_NEWAPI_ACTION=$NEWAPI_ACTION")
                 ;;
             "$SVC_GITGITHUB")
                 extra_env+=(
@@ -1447,6 +1590,7 @@ AI-native server deployment and model operations toolkit
   --cliproxy-image IMAGE          CliproxyAPI Docker 镜像
   --db-type TYPE                  postgresql | mysql
   --newapi-image IMAGE            New-API Docker 镜像
+  --newapi-action ACTION          ensure（默认 no-op）| upgrade | migrate-db
   --git-name NAME                 用户明确确认的 Git 提交名称
   --git-email EMAIL               用户明确确认的 Git 提交邮箱
   --git-machine-role ROLE         workstation | server
@@ -1455,6 +1599,8 @@ AI-native server deployment and model operations toolkit
   --git-target-user USER          Git/gh 所属的系统用户
   --gh-auth-mode MODE             web | skip
   --admin-password VALUE          CliproxyAPI 管理密码；省略则自动生成
+  --allow-managed-drift           单独确认覆盖已审查的 managed 漂移
+  --allow-untracked-overwrite     单独确认覆盖已审查的未跟踪目标文件
   --yes                           apply 时确认执行计划
 
 Profile 示例:
@@ -1462,6 +1608,7 @@ Profile 示例:
   HAO_ACCESS_MODE="domain"
   HAO_NEWAPI_DOMAIN="api.example.com"
   HAO_DB_TYPE="postgresql"
+  HAO_NEWAPI_ACTION="ensure"
   HAO_CONFIRM_APPLY="yes"
 
 说明:
@@ -1636,10 +1783,15 @@ parse_cli_args() {
                 ;;
             --db-type)
                 DB_TYPE="${2:-}"
+                DB_TYPE_EXPLICIT=true
                 shift 2
                 ;;
             --newapi-image)
                 NEWAPI_IMAGE="${2:-}"
+                shift 2
+                ;;
+            --newapi-action)
+                NEWAPI_ACTION="${2:-}"
                 shift 2
                 ;;
             --git-name)
@@ -1674,6 +1826,14 @@ parse_cli_args() {
                 ADMIN_PASSWORD="${2:-}"
                 shift 2
                 ;;
+            --allow-managed-drift)
+                ALLOW_MANAGED_DRIFT=true
+                shift
+                ;;
+            --allow-untracked-overwrite)
+                ALLOW_UNTRACKED_OVERWRITE=true
+                shift
+                ;;
             --yes|-y)
                 CLI_ASSUME_YES=true
                 shift
@@ -1694,7 +1854,11 @@ parse_cli_args() {
     ACCESS_MODE="${ACCESS_MODE:-${HAO_ACCESS_MODE:-}}"
     DOMAIN="${DOMAIN:-${HAO_DOMAIN:-}}"
     CLIPROXY_DEPLOY_MODE="${CLIPROXY_DEPLOY_MODE:-${HAO_CLIPROXY_MODE:-docker}}"
+    if [ -n "${HAO_DB_TYPE:-}" ]; then
+        DB_TYPE_EXPLICIT=true
+    fi
     DB_TYPE="${DB_TYPE:-${HAO_DB_TYPE:-postgresql}}"
+    NEWAPI_ACTION="${NEWAPI_ACTION:-${HAO_NEWAPI_ACTION:-ensure}}"
     CLIPROXY_IMAGE="${CLIPROXY_IMAGE:-${HAO_CLIPROXY_IMAGE:-eceasy/cli-proxy-api:latest}}"
     NEWAPI_IMAGE="${NEWAPI_IMAGE:-${HAO_NEWAPI_IMAGE:-calciumion/new-api:latest}}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-${HAO_ADMIN_PASSWORD:-}}"
@@ -1707,6 +1871,13 @@ parse_cli_args() {
     GIT_REPO_DIR="${GIT_REPO_DIR:-${HAO_GIT_REPO_DIR:-}}"
     GIT_TARGET_USER="${GIT_TARGET_USER:-${HAO_GIT_TARGET_USER:-}}"
     GH_AUTH_MODE="${GH_AUTH_MODE:-${HAO_GH_AUTH_MODE:-web}}"
+
+    if [ "${HAO_ALLOW_MANAGED_DRIFT:-}" = "yes" ]; then
+        ALLOW_MANAGED_DRIFT=true
+    fi
+    if [ "${HAO_ALLOW_UNTRACKED_OVERWRITE:-}" = "yes" ]; then
+        ALLOW_UNTRACKED_OVERWRITE=true
+    fi
 
     if [ "${HAO_CONFIRM_APPLY:-}" = "yes" ]; then
         CLI_ASSUME_YES=true
@@ -1767,6 +1938,45 @@ validate_cli_config() {
             ;;
     esac
 
+    case "${NEWAPI_ACTION,,}" in
+        ensure|install) NEWAPI_ACTION="ensure" ;;
+        upgrade) NEWAPI_ACTION="upgrade" ;;
+        migrate-db|migrate|database-migration) NEWAPI_ACTION="migrate-db" ;;
+        *)
+            echo "[ERROR] --newapi-action 只能是 ensure、upgrade 或 migrate-db，当前: $NEWAPI_ACTION" >&2
+            exit 1
+            ;;
+    esac
+
+    if [ "${TO_INSTALL[$SVC_NEWAPI]:-}" = "true" ]; then
+        if [ "${ALREADY_INSTALLED[$SVC_NEWAPI]:-}" = "true" ]; then
+            NEWAPI_EXISTING_DB_TYPE="$(detect_newapi_db_type)"
+            case "$NEWAPI_ACTION" in
+                ensure)
+                    if [ "$NEWAPI_EXISTING_DB_TYPE" != "unknown" ]; then
+                        DB_TYPE="$NEWAPI_EXISTING_DB_TYPE"
+                    fi
+                    ;;
+                upgrade)
+                    [ "$NEWAPI_EXISTING_DB_TYPE" != "unknown" ] \
+                        || { echo "[ERROR] 无法识别现有 New-API 数据库类型，拒绝升级。" >&2; exit 1; }
+                    if [ "$DB_TYPE_EXPLICIT" != "true" ]; then
+                        DB_TYPE="$NEWAPI_EXISTING_DB_TYPE"
+                    fi
+                    [ "$DB_TYPE" = "$NEWAPI_EXISTING_DB_TYPE" ] \
+                        || { echo "[ERROR] upgrade 不能把数据库从 $NEWAPI_EXISTING_DB_TYPE 改为 $DB_TYPE；数据库迁移必须使用独立流程。" >&2; exit 1; }
+                    ;;
+                migrate-db)
+                    echo "[ERROR] HAO 不自动执行 PostgreSQL/MySQL 跨引擎迁移；请使用独立、可回滚的迁移流程。" >&2
+                    exit 1
+                    ;;
+            esac
+        elif [ "$NEWAPI_ACTION" != "ensure" ]; then
+            echo "[ERROR] New-API 尚未部署，不能执行 $NEWAPI_ACTION；首次安装请使用 ensure。" >&2
+            exit 1
+        fi
+    fi
+
     if [ "${TO_INSTALL[$SVC_GITGITHUB]:-}" = "true" ]; then
         [ -n "$GIT_NAME" ] || { echo "[ERROR] git-github 需要 --git-name 或 HAO_GIT_NAME；不会自动推导姓名。" >&2; exit 1; }
         [ -n "$GIT_EMAIL" ] || { echo "[ERROR] git-github 需要 --git-email 或 HAO_GIT_EMAIL；不会自动推导邮箱。" >&2; exit 1; }
@@ -1818,7 +2028,7 @@ validate_cli_config() {
     fi
 
     for svc in "${ALL_SERVICES[@]}"; do
-        if [ "${TO_INSTALL[$svc]:-}" = "true" ] && is_web_service "$svc"; then
+        if [ "${TO_INSTALL[$svc]:-}" = "true" ] && is_web_service "$svc" && service_will_mutate "$svc"; then
             web_count=$((web_count + 1))
         fi
     done
@@ -1841,7 +2051,7 @@ validate_cli_config() {
     fi
 
     for svc in "${ALL_SERVICES[@]}"; do
-        if [ "${TO_INSTALL[$svc]:-}" != "true" ] || ! is_web_service "$svc"; then
+        if [ "${TO_INSTALL[$svc]:-}" != "true" ] || ! is_web_service "$svc" || ! service_will_mutate "$svc"; then
             continue
         fi
 
@@ -1873,7 +2083,7 @@ prepare_cli_plan() {
 }
 
 print_cli_plan() {
-    local svc dep domain_value
+    local svc dep domain_value any_mutation=false
 
     echo "HAO deployment plan"
     echo "Release: ${RELEASE_ID}"
@@ -1892,6 +2102,7 @@ print_cli_plan() {
         echo "  - Nothing to install"
     else
         for svc in "${INSTALL_ORDER[@]}"; do
+            service_will_mutate "$svc" && any_mutation=true
             dep="${SVC_DEPENDS[$svc]}"
             [ -z "$dep" ] && dep="none"
             echo "  - $(service_short_name "$svc")"
@@ -1917,6 +2128,10 @@ print_cli_plan() {
                     fi
                     ;;
                 "$SVC_NEWAPI")
+                    echo "    action: $NEWAPI_ACTION"
+                    if ! service_will_mutate "$svc"; then
+                        echo "    result: no-op (existing deployment preserved)"
+                    fi
                     echo "    database: $DB_TYPE"
                     echo "    image: $NEWAPI_IMAGE"
                     print_image_candidates "new-api"
@@ -1952,14 +2167,24 @@ print_cli_plan() {
 
     echo ""
     echo "System changes expected:"
-    echo "  - May install OS packages and enable systemd services"
-    echo "  - May write files under /opt, /etc/nginx, /etc/docker, /var/log/vps-deploy, /var/lib/hao"
-    echo "  - Records HAO ownership and resource hashes in /var/lib/hao/manifest.json"
-    echo "  - Nginx configs are backed up before overwrite where supported"
-    echo "  - Secret values are written to credential files and are not printed"
+    if [ "$any_mutation" = true ]; then
+        echo "  - May install OS packages and enable systemd services"
+        echo "  - May write files under /opt, /etc/nginx, /etc/docker, /var/log/vps-deploy, /var/lib/hao"
+        echo "  - Records HAO ownership and resource hashes in /var/lib/hao/manifest.json"
+        echo "  - Nginx configs are backed up before overwrite where supported"
+        echo "  - Secret values are written to credential files and are not printed"
+    else
+        echo "  - No selected service changes; apply only performs checks and writes its deployment log"
+    fi
     if [ "${TO_INSTALL[$SVC_GITGITHUB]:-}" = "true" ]; then
         echo "  - Installs Git and gh; Git identity config remains a shared user/repository resource"
         echo "  - Does not log in to GitHub; web/SSH authorization is a separate target-user action"
+    fi
+    if [ "$ALLOW_MANAGED_DRIFT" = "true" ]; then
+        echo "  - Explicit override: reviewed managed drift may be overwritten"
+    fi
+    if [ "$ALLOW_UNTRACKED_OVERWRITE" = "true" ]; then
+        echo "  - Explicit override: reviewed untracked target files may be overwritten"
     fi
 }
 
@@ -2146,6 +2371,14 @@ run_preflight_checks() {
     fi
 
     echo ""
+    echo "Apply resource safety"
+    if run_apply_resource_safety_checks; then
+        report_check "ok" "Managed drift and untracked targets" "no blocking conflicts"
+    fi
+    failures=$((failures + ${RESOURCE_SAFETY_FAILURES:-0}))
+    warnings=$((warnings + ${RESOURCE_SAFETY_WARNINGS:-0}))
+
+    echo ""
     echo "Preflight summary: $failures failure(s), $warnings warning(s)"
     [ "$failures" -eq 0 ]
 }
@@ -2170,7 +2403,7 @@ print_cli_status() {
             "$SVC_DOCKER")      echo "$(docker --version 2>/dev/null || echo unavailable)" ;;
             "$SVC_GITGITHUB")   echo "$(git --version 2>/dev/null || echo 'git unavailable'); $(gh --version 2>/dev/null | head -1 || echo 'gh unavailable')" ;;
             "$SVC_CLIPROXY")    echo "$(compose_running_text /opt/docker-services/cliproxyapi)" ;;
-            "$SVC_NEWAPI")      echo "$(compose_running_text /opt/docker-services/new-api)" ;;
+            "$SVC_NEWAPI")      echo "$(compose_running_text "$(newapi_service_dir)")" ;;
             "$SVC_PI")          echo "$(command -v pi 2>/dev/null || echo unavailable)" ;;
             "$SVC_CLAUDECODE")  echo "$(command -v claude 2>/dev/null || echo unavailable)" ;;
         esac
