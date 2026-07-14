@@ -18,6 +18,8 @@ configure_repo_identity() {
   HAO_GIT_REPO_DIR="$REPO_DIR" \
   HAO_GIT_TARGET_USER="$(id -un)" \
   HAO_GH_AUTH_MODE=skip \
+  HAO_GIT_AGENT_FILES="${AGENT_FILE:-}" \
+  HAO_GIT_SKIP_AGENT_CONVENTION="${SKIP_CONVENTION:-1}" \
     "$ROOT_DIR/git-github/install.sh" >/dev/null
 }
 
@@ -25,6 +27,24 @@ configure_repo_identity "Exact User" "exact.user@example.com"
 test "$(git -C "$REPO_DIR" config --local user.name)" = "Exact User"
 test "$(git -C "$REPO_DIR" config --local user.email)" = "exact.user@example.com"
 test "$(git -C "$REPO_DIR" config --local --get hao.identityConfigured)" = "true"
+
+# Agent convention: explicit file target, marker block, idempotent re-run.
+AGENT_FILE="$TMP_DIR/agents/CLAUDE.md"
+SKIP_CONVENTION=0 AGENT_FILE="$AGENT_FILE" configure_repo_identity "Exact User" "exact.user@example.com"
+grep -q 'HAO-GIT-GITHUB BEGIN' "$AGENT_FILE"
+grep -q 'gh pr create' "$AGENT_FILE"
+grep -q 'hao-github-authorize' "$AGENT_FILE"
+first_hash="$(sha256sum "$AGENT_FILE" | cut -d' ' -f1)"
+SKIP_CONVENTION=0 AGENT_FILE="$AGENT_FILE" configure_repo_identity "Exact User" "exact.user@example.com"
+test "$(grep -c 'HAO-GIT-GITHUB BEGIN' "$AGENT_FILE")" = "1"
+test "$(sha256sum "$AGENT_FILE" | cut -d' ' -f1)" = "$first_hash"
+# uv and git-github blocks must coexist in one file.
+printf '## Python 环境约定占位\n' | bash -c '
+  source "'"$ROOT_DIR"'/lib/agent-convention.sh"
+  hao_write_agent_convention "'"$AGENT_FILE"'" "HAO-UV" "'"$(id -un)"'"
+'
+grep -q 'HAO-UV BEGIN' "$AGENT_FILE"
+grep -q 'HAO-GIT-GITHUB BEGIN' "$AGENT_FILE"
 
 # Idempotent with the same exact values.
 configure_repo_identity "Exact User" "exact.user@example.com"
@@ -43,6 +63,7 @@ HAO_GIT_REPO_DIR="$REPO_DIR" \
 HAO_GIT_TARGET_USER="$(id -un)" \
 HAO_GH_AUTH_MODE=skip \
 HAO_GIT_ALLOW_IDENTITY_CHANGE=yes \
+HAO_GIT_SKIP_AGENT_CONVENTION=1 \
   "$ROOT_DIR/git-github/install.sh" >/dev/null
 test "$(git -C "$REPO_DIR" config --local user.name)" = "Different User"
 

@@ -17,6 +17,7 @@
 #   ./install.sh -h                   # 显示帮助
 #
 # 配置变量（均可选，见 README.md）：
+#   HAO_CC_ACTION         ensure（默认：CLI 已安装则保持现有版本）| upgrade
 #   HAO_CC_BASE_URL       Anthropic 兼容网关地址
 #   HAO_CC_AUTH_TOKEN     API token（或使用 HAO_CC_TOKEN_FILE）
 #   HAO_CC_TOKEN_FILE     从文件读取 token，避免 token 出现在命令行/profile
@@ -81,6 +82,14 @@ for arg in "$@"; do
 done
 
 # ==================== 配置解析 ====================
+CC_ACTION="${HAO_CC_ACTION:-ensure}"
+case "$CC_ACTION" in
+    ensure|upgrade) ;;
+    *)
+        echo "[ERROR] 无效的 HAO_CC_ACTION: $CC_ACTION（可选: ensure | upgrade）" >&2
+        exit 1
+        ;;
+esac
 CONFIGURE_ONLY=false
 if [ "${HAO_CC_CONFIGURE_ONLY:-}" = "1" ]; then
     CONFIGURE_ONLY=true
@@ -175,10 +184,16 @@ else
     log_step "Step 2/3: 安装 Claude Code..."
     if command -v claude &>/dev/null; then
         CLAUDE_VERSION=$(claude --version 2>/dev/null || echo "unknown")
-        log_warning "Claude Code 已安装 (${CLAUDE_VERSION})，升级到最新版..."
+        if [ "$CC_ACTION" = "upgrade" ]; then
+            log_info "Claude Code 已安装 (${CLAUDE_VERSION})，HAO_CC_ACTION=upgrade，升级到最新版..."
+            npm install -g @anthropic-ai/claude-code
+        else
+            log_success "Claude Code 已安装 (${CLAUDE_VERSION})，保持现有版本。如需升级: HAO_CC_ACTION=upgrade"
+        fi
+    else
+        npm install -g @anthropic-ai/claude-code
     fi
-    npm install -g @anthropic-ai/claude-code
-    log_success "Claude Code 安装完成: $(claude --version 2>/dev/null || echo 'unknown')"
+    log_success "Claude Code 就绪: $(claude --version 2>/dev/null || echo 'unknown')"
 fi
 
 # === Step 3: 写入配置 ===

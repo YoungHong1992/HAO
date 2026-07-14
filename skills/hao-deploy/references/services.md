@@ -7,11 +7,11 @@ Use these IDs in `HAO_SERVICES` or `--services`:
 - `maintenance`: fail2ban, swap, journald limits, Docker log rotation
 - `nginx`: Nginx mainline with HTTP/3/QUIC and BBR tuning
 - `docker`: Docker Engine and Docker Compose plugin
-- `git-github`: Git identity, official GitHub CLI, and separate Web + SSH authorization helper
+- `git-github`: Git identity, official GitHub CLI, separate Web + SSH authorization helper, and a managed "use gh" convention block written to detected AI assistant instruction files
 - `cliproxyapi`: CliproxyAPI, default Docker Compose deployment
 - `new-api`: New-API model gateway, Docker Compose deployment
-- `pi`: terminal AI coding assistant
 - `claude-code`: Anthropic Claude Code CLI, with optional gateway/model/token configuration
+- `uv`: uv Python package/environment manager, plus a managed "always use uv" convention block written to detected AI assistant instruction files (Claude Code, Pi, and others — see `uv/README.md` for the full detection table)
 
 Aliases accepted by the CLI include `git`, `github`, `gh`, `newapi`, `cliproxy`,
 `cpa`, `claudecode`, `cc`, and `all`. `git-github` is deliberately excluded from
@@ -22,7 +22,7 @@ Aliases accepted by the CLI include `git`, `github`, `gh`, `newapi`, `cliproxy`,
 - `cliproxyapi` depends on `nginx` and `docker` in Docker mode.
 - `cliproxyapi` depends on `nginx` in bare mode.
 - `new-api` depends on `nginx` and `docker`.
-- `maintenance`, `nginx`, `docker`, `git-github`, `pi`, and `claude-code` have no root-level service dependencies.
+- `maintenance`, `nginx`, `docker`, `git-github`, `claude-code`, and `uv` have no root-level service dependencies.
 
 Already installed dependencies are detected and skipped unless selected directly.
 
@@ -49,11 +49,19 @@ Already installed dependencies are detected and skipped unless selected directly
 - `HAO_GH_AUTH_MODE`: `web` or `skip`
 - `HAO_GIT_ALLOW_IDENTITY_CHANGE`: `yes` only after reviewing a conflicting existing identity
 - `HAO_GIT_ALLOW_SERVER_AUTH`: `yes` only after separately confirming personal GitHub auth on a server
+- `HAO_GIT_SKIP_AGENT_CONVENTION`: set to `1` to skip writing the gh usage convention into AI-assistant instruction files
+- `HAO_GIT_AGENT_FILES`: comma-separated absolute paths overriding assistant auto-detection for the gh convention
 - `HAO_CC_BASE_URL`: Claude Code Anthropic-compatible gateway URL
 - `HAO_CC_TOKEN_FILE`: file containing the Claude Code API token (preferred over `HAO_CC_AUTH_TOKEN`; keeps the secret out of the profile)
 - `HAO_CC_MODEL`: Claude Code default model (also sets Sonnet/Opus/Haiku defaults)
 - `HAO_CC_USER`: user whose `~/.claude/settings.json` is written (default: invoking user)
 - `HAO_CC_CONFIGURE_ONLY`: set to `1` to write configuration without installing Node.js/CLI
+- `HAO_CC_ACTION`: `ensure` (default, keep an existing Claude Code CLI version) or `upgrade`
+- `HAO_UV_ACTION`: `ensure` (default, keep an existing uv version; convention block still refreshes) or `upgrade`
+- `HAO_UV_PYTHON`: comma-separated Python versions to preinstall via uv (e.g. `3.12`)
+- `HAO_UV_USER`: user whose AI-assistant instruction files receive the uv convention (default: invoking user)
+- `HAO_UV_AGENT_FILES`: comma-separated absolute paths overriding assistant auto-detection
+- `HAO_UV_SKIP_AGENT_CONVENTION`: set to `1` to install uv without writing any convention block
 - `HAO_CONFIRM_APPLY`: set to `yes` only after user confirmation
 - `HAO_ALLOW_MANAGED_DRIFT`: set to `yes` only after separately reviewing managed drift
 - `HAO_ALLOW_UNTRACKED_OVERWRITE`: set to `yes` only after separately reviewing each untracked target

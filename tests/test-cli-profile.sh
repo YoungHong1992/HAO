@@ -9,7 +9,7 @@ PROFILE="$TMP_DIR/deploy.env"
 PWNED="$TMP_DIR/profile-executed"
 
 cat > "$PROFILE" <<EOF
-HAO_SERVICES="pi"
+HAO_SERVICES="uv"
 HAO_PROFILE_MARKER="\$(touch "$PWNED")"
 EOF
 
@@ -21,7 +21,7 @@ if [ -e "$PWNED" ]; then
 fi
 
 override_output="$(HAO_SERVICES=maintenance "$ROOT_DIR/hao" plan --profile "$PROFILE")"
-if ! grep -q '  - Pi:' <<<"$override_output" || grep -q '  - Maintenance:' <<<"$override_output"; then
+if ! grep -q '  - uv:' <<<"$override_output" || grep -q '  - Maintenance:' <<<"$override_output"; then
   echo "Profile did not override ambient HAO_SERVICES" >&2
   exit 1
 fi
@@ -29,7 +29,7 @@ fi
 BAD_PROFILE="$TMP_DIR/bad.env"
 cat > "$BAD_PROFILE" <<'EOF'
 PATH=/tmp
-HAO_SERVICES="pi"
+HAO_SERVICES="uv"
 EOF
 
 if "$ROOT_DIR/hao" plan --profile "$BAD_PROFILE" >/dev/null 2>&1; then
@@ -39,7 +39,7 @@ fi
 
 UNCLOSED_PROFILE="$TMP_DIR/unclosed.env"
 cat > "$UNCLOSED_PROFILE" <<'EOF'
-HAO_SERVICES="pi
+HAO_SERVICES="uv
 EOF
 
 if "$ROOT_DIR/hao" plan --profile "$UNCLOSED_PROFILE" >/dev/null 2>&1; then

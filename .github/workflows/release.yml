@@ -86,7 +86,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist/hao
-          cp -a hao install.sh lib maintenance nginx docker git-github cliproxyapi new-api pi-coding-agent claude-code README.md AGENTS.md docs skills config LICENSE RELEASE build-info.json dist/hao/
+          cp -a hao install.sh lib maintenance nginx docker git-github cliproxyapi new-api claude-code uv README.md AGENTS.md docs skills config LICENSE RELEASE build-info.json dist/hao/
           tar czf hao.tar.gz -C dist hao
           sha256sum hao.tar.gz > checksums.txt
 

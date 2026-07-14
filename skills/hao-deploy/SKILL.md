@@ -1,6 +1,6 @@
 ---
 name: hao-deploy
-description: AI-assisted deployment of HAO (HongAgentOps) services and tools on Debian or Ubuntu hosts. Use when an AI agent needs to plan, preflight, apply, inspect, or troubleshoot Maintenance, Nginx, Docker, Git/GitHub, CliproxyAPI, New-API, Pi, or Claude Code using the repository's hao CLI and profile-driven workflow.
+description: AI-assisted deployment of HAO (HongAgentOps) services and tools on Debian or Ubuntu hosts. Use when an AI agent needs to plan, preflight, apply, inspect, or troubleshoot Maintenance, Nginx, Docker, Git/GitHub, CliproxyAPI, New-API, Claude Code, or uv using the repository's hao CLI and profile-driven workflow.
 ---
 
 # HAO Deploy

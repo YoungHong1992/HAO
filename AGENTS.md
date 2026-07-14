@@ -23,7 +23,9 @@ sudo ./hao apply --profile deploy.env --yes              # mutates the system; O
 and requires root. Everything else is safe to run for exploration.
 
 Official OS targets are Debian 13/12 and Ubuntu 26.04/24.04/22.04 LTS.
-`preflight` rejects releases outside this matrix.
+`preflight` rejects releases outside this matrix. Release acceptance and CI
+integration tests run on Ubuntu only — do not add or run Debian acceptance
+tests (see `docs/releasing.md`).
 
 ## The contract
 

@@ -26,7 +26,8 @@
 #   3. Docker 容器环境    - Docker Engine + Compose 插件
 #   4. CliproxyAPI        - 轻量 AI API 转发代理（默认 Docker Compose，可选裸机）
 #   5. New-API            - AI 模型网关与资产管理系统
-#   6. Pi 编程助手       - 终端 AI 编程助手
+#   6. Claude Code        - Anthropic 官方终端 AI 编程助手
+#   7. uv                 - Python 包/环境管理器 + AI 助手使用约定
 #
 ################################################################################
 
@@ -159,12 +160,13 @@ bootstrap_full_repo() {
         || [ ! -f "$root_dir/git-github/authorize.sh" ] \
         || [ ! -f "$root_dir/cliproxyapi/install.sh" ] \
         || [ ! -f "$root_dir/new-api/install.sh" ] \
-        || [ ! -f "$root_dir/pi-coding-agent/install.sh" ] \
         || [ ! -f "$root_dir/claude-code/install.sh" ] \
+        || [ ! -f "$root_dir/uv/install.sh" ] \
         || [ ! -f "$root_dir/lib/common.sh" ] \
         || [ ! -f "$root_dir/lib/crypto.sh" ] \
         || [ ! -f "$root_dir/lib/credentials.sh" ] \
         || [ ! -f "$root_dir/lib/state.sh" ] \
+        || [ ! -f "$root_dir/lib/agent-convention.sh" ] \
         || [ ! -f "$root_dir/config/image-candidates.tsv" ]; then
         echo "[ERROR] 下载的安装包不完整。" >&2
         rm -rf "$tmp_dir"
@@ -194,12 +196,13 @@ if [ ! -f "$INSTALL_DIR/maintenance/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/git-github/authorize.sh" ] \
     || [ ! -f "$INSTALL_DIR/cliproxyapi/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/new-api/install.sh" ] \
-    || [ ! -f "$INSTALL_DIR/pi-coding-agent/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/claude-code/install.sh" ] \
+    || [ ! -f "$INSTALL_DIR/uv/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/lib/common.sh" ] \
     || [ ! -f "$INSTALL_DIR/lib/crypto.sh" ] \
     || [ ! -f "$INSTALL_DIR/lib/credentials.sh" ] \
     || [ ! -f "$INSTALL_DIR/lib/state.sh" ] \
+    || [ ! -f "$INSTALL_DIR/lib/agent-convention.sh" ] \
     || [ ! -f "$INSTALL_DIR/config/image-candidates.tsv" ]; then
     bootstrap_full_repo "$@"
 fi
@@ -752,7 +755,8 @@ AI 协作流程:
   Docker 容器环境          Docker Engine + Compose 插件
   CliproxyAPI              轻量 AI API 转发代理 (默认 Docker Compose，可选裸机)
   New-API                  AI 模型网关与资产管理系统 (需 ≥1GB 内存)
-  Pi 编程助手              终端 AI 编程助手 (500MB 磁盘)
+  Claude Code              Anthropic 官方终端 AI 编程助手 (500MB 磁盘)
+  uv                       Python 包/环境管理器 + AI 助手使用约定
 
 注意:
   - 需要 root 权限
@@ -786,8 +790,8 @@ readonly SVC_DOCKER="docker"
 readonly SVC_GITGITHUB="git-github"
 readonly SVC_CLIPROXY="cliproxyapi"
 readonly SVC_NEWAPI="newapi"
-readonly SVC_PI="pi"
 readonly SVC_CLAUDECODE="claude-code"
+readonly SVC_UV="uv"
 
 # Service definitions (order = dependency order)
 declare -A SVC_NAME SVC_DESC SVC_HINT SVC_SCRIPT SVC_DEPENDS
@@ -827,27 +831,27 @@ SVC_HINT[$SVC_NEWAPI]="≥ 1GB 内存"
 SVC_SCRIPT[$SVC_NEWAPI]="$INSTALL_DIR/new-api/install.sh"
 SVC_DEPENDS[$SVC_NEWAPI]="$SVC_NGINX $SVC_DOCKER"
 
-SVC_NAME[$SVC_PI]="Pi 编程助手"
-SVC_DESC[$SVC_PI]="极简终端 AI 编程助手，支持 Anthropic/OpenAI/Gemini/DeepSeek"
-SVC_HINT[$SVC_PI]="500MB 磁盘"
-SVC_SCRIPT[$SVC_PI]="$INSTALL_DIR/pi-coding-agent/install.sh"
-SVC_DEPENDS[$SVC_PI]=""
-
 SVC_NAME[$SVC_CLAUDECODE]="Claude Code"
 SVC_DESC[$SVC_CLAUDECODE]="Anthropic 官方终端 AI 编程助手，可选配置自定义网关/模型"
 SVC_HINT[$SVC_CLAUDECODE]="500MB 磁盘"
 SVC_SCRIPT[$SVC_CLAUDECODE]="$INSTALL_DIR/claude-code/install.sh"
 SVC_DEPENDS[$SVC_CLAUDECODE]=""
 
+SVC_NAME[$SVC_UV]="uv (Python 环境)"
+SVC_DESC[$SVC_UV]="uv 包管理器 + 向 AI 助手写入 Python 虚拟环境使用约定"
+SVC_HINT[$SVC_UV]="50MB 磁盘"
+SVC_SCRIPT[$SVC_UV]="$INSTALL_DIR/uv/install.sh"
+SVC_DEPENDS[$SVC_UV]=""
+
 # Ordered list for display
 readonly ALL_SERVICES=(
     "$SVC_MAINTENANCE" "$SVC_NGINX" "$SVC_DOCKER"
-    "$SVC_CLIPROXY" "$SVC_NEWAPI" "$SVC_GITGITHUB" "$SVC_PI" "$SVC_CLAUDECODE"
+    "$SVC_CLIPROXY" "$SVC_NEWAPI" "$SVC_GITGITHUB" "$SVC_CLAUDECODE" "$SVC_UV"
 )
 # Personal identity tooling is opt-in and intentionally excluded from `--services all`.
 readonly DEFAULT_ALL_SERVICES=(
     "$SVC_MAINTENANCE" "$SVC_NGINX" "$SVC_DOCKER"
-    "$SVC_CLIPROXY" "$SVC_NEWAPI" "$SVC_PI" "$SVC_CLAUDECODE"
+    "$SVC_CLIPROXY" "$SVC_NEWAPI" "$SVC_CLAUDECODE" "$SVC_UV"
 )
 
 # Runtime state
@@ -983,13 +987,13 @@ detect_installed_services() {
                     ALREADY_INSTALLED[$svc]=true
                 fi
                 ;;
-            "$SVC_PI")
-                if command -v pi &>/dev/null; then
+            "$SVC_CLAUDECODE")
+                if command -v claude &>/dev/null; then
                     ALREADY_INSTALLED[$svc]=true
                 fi
                 ;;
-            "$SVC_CLAUDECODE")
-                if command -v claude &>/dev/null; then
+            "$SVC_UV")
+                if command -v uv &>/dev/null; then
                     ALREADY_INSTALLED[$svc]=true
                 fi
                 ;;
@@ -1007,8 +1011,8 @@ service_short_name() {
         "$SVC_GITGITHUB") echo "Git + GitHub" ;;
         "$SVC_CLIPROXY") echo "CliproxyAPI" ;;
         "$SVC_NEWAPI")   echo "New-API" ;;
-        "$SVC_PI")       echo "Pi" ;;
         "$SVC_CLAUDECODE") echo "Claude Code" ;;
+        "$SVC_UV")       echo "uv" ;;
         *)                echo "$1" ;;
     esac
 }
@@ -1239,12 +1243,14 @@ collect_service_resource_candidates() {
             domain_value="${SERVICE_DOMAIN[$svc]:-}"
             [ -n "$domain_value" ] && output+=("auto:$nginx_conf_dir/${domain_value}.conf")
             ;;
-        "$SVC_PI")
-            binary="$(command -v pi 2>/dev/null || true)"
-            [ -n "$binary" ] && output+=("managed:$binary")
-            ;;
         "$SVC_CLAUDECODE")
             binary="$(command -v claude 2>/dev/null || true)"
+            [ -n "$binary" ] && output+=("managed:$binary")
+            ;;
+        "$SVC_UV")
+            binary="$(command -v uv 2>/dev/null || true)"
+            [ -n "$binary" ] && output+=("managed:$binary")
+            binary="$(command -v uvx 2>/dev/null || true)"
             [ -n "$binary" ] && output+=("managed:$binary")
             ;;
     esac
@@ -1437,11 +1443,12 @@ run_install() {
                 )
                 [ -n "$GIT_REPO_DIR" ] && extra_env+=("HAO_GIT_REPO_DIR=$GIT_REPO_DIR")
                 ;;
-            "$SVC_PI")
-                extra_env+=("HAO_NO_PROMPT=1")
-                ;;
             "$SVC_CLAUDECODE")
                 # HAO_CC_* 配置变量由 profile 导出后随环境继承，无需逐个转发。
+                extra_env+=("HAO_NO_PROMPT=1")
+                ;;
+            "$SVC_UV")
+                # HAO_UV_* 配置变量由 profile 导出后随环境继承，无需逐个转发。
                 extra_env+=("HAO_NO_PROMPT=1")
                 ;;
         esac
@@ -1543,15 +1550,16 @@ print_summary() {
                 fi
                 echo ""
                 ;;
-            "$SVC_PI")
-                echo "  Pi:"
-                echo "    pi --help  |  pi -p \"你的问题\""
-                echo ""
-                ;;
             "$SVC_CLAUDECODE")
                 echo "  Claude Code:"
                 echo "    claude --version  |  claude"
                 echo "    配置文件: ~/.claude/settings.json（修改后需重启 claude）"
+                echo ""
+                ;;
+            "$SVC_UV")
+                echo "  uv:"
+                echo "    uv --version  |  uv venv  |  uv add <pkg>  |  uvx <tool>"
+                echo "    Python 项目约定已写入已检测到的 AI 助手指令文件"
                 echo ""
                 ;;
         esac
@@ -1581,7 +1589,7 @@ AI-native server deployment and model operations toolkit
 
 通用参数:
   --profile FILE                  读取 .env 风格部署配置
-  --services LIST                 逗号分隔服务: maintenance,nginx,docker,cliproxyapi,new-api,git-github,pi,claude-code
+  --services LIST                 逗号分隔服务: maintenance,nginx,docker,cliproxyapi,new-api,git-github,claude-code,uv
   --access-mode MODE              domain | ip | http
   --domain VALUE                  单个 Web 服务域名/IP
   --cliproxy-domain VALUE         CliproxyAPI 专用域名
@@ -1637,8 +1645,8 @@ normalize_service_id() {
         git-github|gitgithub|git-gh|github|gh|git) echo "$SVC_GITGITHUB" ;;
         cliproxy|cliproxyapi|cpa|cli-proxy-api) echo "$SVC_CLIPROXY" ;;
         newapi|new-api) echo "$SVC_NEWAPI" ;;
-        pi|pi-coding-agent|coding-agent) echo "$SVC_PI" ;;
         claude-code|claudecode|claude|cc) echo "$SVC_CLAUDECODE" ;;
+        uv|python-uv|uvx) echo "$SVC_UV" ;;
         *)
             echo "未知服务: $1" >&2
             return 1
@@ -2152,6 +2160,10 @@ print_cli_plan() {
                     fi
                     ;;
                 "$SVC_CLAUDECODE")
+                    echo "    action: ${HAO_CC_ACTION:-ensure}"
+                    if [ "${ALREADY_INSTALLED[$svc]:-}" = "true" ] && [ "${HAO_CC_ACTION:-ensure}" = "ensure" ]; then
+                        echo "    result: keep existing CLI version (set HAO_CC_ACTION=upgrade to upgrade)"
+                    fi
                     echo "    gateway: ${HAO_CC_BASE_URL:-default (api.anthropic.com)}"
                     echo "    model: ${HAO_CC_MODEL:-default}"
                     if [ -n "${HAO_CC_AUTH_TOKEN:-}" ] || [ -n "${HAO_CC_TOKEN_FILE:-}" ]; then
@@ -2160,6 +2172,21 @@ print_cli_plan() {
                         echo "    token: not provided"
                     fi
                     echo "    settings_user: ${HAO_CC_USER:-${SUDO_USER:-root}}"
+                    ;;
+                "$SVC_UV")
+                    echo "    action: ${HAO_UV_ACTION:-ensure}"
+                    if [ "${ALREADY_INSTALLED[$svc]:-}" = "true" ] && [ "${HAO_UV_ACTION:-ensure}" = "ensure" ]; then
+                        echo "    result: keep existing uv version (set HAO_UV_ACTION=upgrade to upgrade)"
+                    fi
+                    echo "    python_preinstall: ${HAO_UV_PYTHON:-none (on-demand)}"
+                    echo "    convention_user: ${HAO_UV_USER:-${SUDO_USER:-root}}"
+                    if [ "${HAO_UV_SKIP_AGENT_CONVENTION:-0}" = "1" ]; then
+                        echo "    agent_convention: skipped"
+                    elif [ -n "${HAO_UV_AGENT_FILES:-}" ]; then
+                        echo "    agent_convention: explicit files (${HAO_UV_AGENT_FILES})"
+                    else
+                        echo "    agent_convention: auto-detect (Claude Code/Pi/Codex/OpenCode)"
+                    fi
                     ;;
             esac
         done
@@ -2404,8 +2431,8 @@ print_cli_status() {
             "$SVC_GITGITHUB")   echo "$(git --version 2>/dev/null || echo 'git unavailable'); $(gh --version 2>/dev/null | head -1 || echo 'gh unavailable')" ;;
             "$SVC_CLIPROXY")    echo "$(compose_running_text /opt/docker-services/cliproxyapi)" ;;
             "$SVC_NEWAPI")      echo "$(compose_running_text "$(newapi_service_dir)")" ;;
-            "$SVC_PI")          echo "$(command -v pi 2>/dev/null || echo unavailable)" ;;
             "$SVC_CLAUDECODE")  echo "$(command -v claude 2>/dev/null || echo unavailable)" ;;
+            "$SVC_UV")          echo "$(uv --version 2>/dev/null || echo unavailable)" ;;
         esac
     done
 }

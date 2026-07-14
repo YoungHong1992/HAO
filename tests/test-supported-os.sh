@@ -10,7 +10,7 @@ run_preflight_for_os() {
   local os_release="$TMP_DIR/${id}-${version}"
   printf 'ID=%s\nVERSION_ID="%s"\n' "$id" "$version" > "$os_release"
 
-  if HAO_OS_RELEASE_FILE="$os_release" "$ROOT_DIR/hao" preflight --services pi >"$TMP_DIR/output" 2>&1; then
+  if HAO_OS_RELEASE_FILE="$os_release" "$ROOT_DIR/hao" preflight --services uv >"$TMP_DIR/output" 2>&1; then
     actual=pass
   else
     actual=fail
