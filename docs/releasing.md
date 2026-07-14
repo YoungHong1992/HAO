@@ -17,7 +17,7 @@ Before triggering the GitHub `Release` workflow:
    date. Keep `latest` as the default and record two fixed-tag alternatives with honest
    maturity labels. The release workflow rejects stale dates and missing registry tags.
 2. Run `./tests/run.sh` locally and confirm the `CI` workflow passed on the target commit.
-3. Complete real-VM acceptance on every supported OS release.
+3. Complete real-VM acceptance on every Ubuntu release in the acceptance matrix below.
 4. Store the acceptance output in an issue, workflow artifact, or other durable URL.
 5. Trigger `Release`, selecting a commit on `main` and supplying that evidence URL.
 
@@ -28,12 +28,17 @@ tag or release already exists.
 
 ## Supported OS acceptance matrix
 
+Release acceptance runs on Ubuntu only. Debian 13/12 remain supported install
+targets (`preflight` accepts them), but they are explicitly excluded from release
+acceptance: GitHub-hosted runners provide no Debian images, and container-based
+Debian runs cannot exercise systemd, Docker, and UFW the way a real VM does.
+Do not add Debian acceptance jobs or record Debian acceptance evidence — it is
+not a release gate and reviewers will not wait for it.
+
 Use a fresh, disposable amd64 or arm64 VM for each target:
 
 | Distribution | Release |
 |---|---|
-| Debian | 13 |
-| Debian | 12 |
 | Ubuntu LTS | 26.04 |
 | Ubuntu LTS | 24.04 |
 | Ubuntu LTS | 22.04 |

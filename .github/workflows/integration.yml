@@ -6,11 +6,13 @@ on:
     paths:
       - 'maintenance/**'
       - 'new-api/**'
+      - 'uv/**'
       - 'lib/**'
       - 'install.sh'
       - 'tests/test-maintenance-idempotency.sh'
       - 'tests/test-apply-safety.sh'
       - 'tests/test-newapi-idempotency.sh'
+      - 'tests/test-uv-idempotency.sh'
       - '.github/workflows/integration.yml'
 
 jobs:
@@ -55,3 +57,14 @@ jobs:
 
       - name: Verify apply stops before drift or untracked overwrites
         run: sudo ./tests/test-apply-safety.sh
+
+  uv-idempotency:
+    name: uv real install idempotency
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run uv installer twice and preinstall Python
+        run: sudo ./tests/test-uv-idempotency.sh

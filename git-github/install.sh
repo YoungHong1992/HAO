@@ -7,6 +7,8 @@ HAO_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HAO_REPO_DIR="$(cd "$HAO_SCRIPT_DIR/.." && pwd)"
 # shellcheck source=../lib/common.sh
 source "$HAO_REPO_DIR/lib/common.sh"
+# shellcheck source=../lib/agent-convention.sh
+source "$HAO_REPO_DIR/lib/agent-convention.sh"
 
 readonly GH_KEYRING_URL="https://cli.github.com/packages/githubcli-archive-keyring.gpg"
 readonly GH_KEYRING_PATH="/etc/apt/keyrings/githubcli-archive-keyring.gpg"
@@ -32,6 +34,14 @@ Optional variables:
   HAO_GIT_ALLOW_IDENTITY_CHANGE=yes
   HAO_GIT_ALLOW_SERVER_AUTH=yes
   HAO_GIT_CONFIG_ONLY=1        Configure an already installed Git; do not install packages/helper
+  HAO_GIT_SKIP_AGENT_CONVENTION=1  Do not write the Git/GitHub convention block
+                                   into detected AI-assistant instruction files
+  HAO_GIT_AGENT_FILES          Comma-separated absolute paths overriding
+                               assistant auto-detection
+
+After installation a managed HAO-GIT-GITHUB convention block is written into
+detected AI-assistant instruction files (Claude Code, Pi, Codex CLI, OpenCode)
+so agents use `gh` for GitHub operations instead of raw API calls or tokens.
 
 GitHub authorization is deliberately separate from apply. After installation,
 run `hao-github-authorize` as the target user to complete browser/device login
@@ -223,6 +233,29 @@ configure_identity() {
     git_config_set hao.identityConfigured true
 }
 
+git_github_convention_text() {
+    cat <<'EOF'
+## Git / GitHub 操作约定（gh）
+
+本机 GitHub 操作一律使用官方 GitHub CLI（`gh`），不要手写 GitHub REST/GraphQL
+调用，也不要引导用户创建长期 Personal Access Token：
+
+- PR：`gh pr create` / `gh pr view` / `gh pr checks` / `gh pr merge`。
+- Issue：`gh issue create` / `gh issue list`。
+- CI：`gh run list` / `gh run view` / `gh run watch`。
+- Release：`gh release list` / `gh release view`（创建 release 前先确认项目的发布流程）。
+- 需要裸 API 时用 `gh api`，它复用已有登录凭据。
+
+授权与安全：
+
+- 认证状态用 `gh auth status` 检查。未登录时提示用户运行 `hao-github-authorize`
+  （web/设备码登录 + SSH Git 协议），不要代替用户输入凭据。
+- 禁止在命令行、日志或提交内容中出现 token 值。
+- Git 推送走 SSH 协议；提交身份已由系统配置好，不要擅自修改 `user.name` / `user.email`。
+- 提交与 PR 前先运行项目自带的测试/检查（如有）。
+EOF
+}
+
 print_result() {
     echo "Git/GitHub tooling configured"
     echo "  target_user: $TARGET_USER"
@@ -248,6 +281,30 @@ print_result() {
     fi
 }
 
+write_agent_convention() {
+    local agent_files=() agent_file line
+    if [ "${HAO_GIT_SKIP_AGENT_CONVENTION:-}" = "1" ]; then
+        return 0
+    fi
+    if [ -n "${HAO_GIT_AGENT_FILES:-}" ]; then
+        IFS=',' read -ra agent_files <<< "$HAO_GIT_AGENT_FILES"
+    else
+        while IFS= read -r line; do
+            [ -n "$line" ] && agent_files+=("$line")
+        done < <(hao_detect_agent_files "$TARGET_HOME")
+    fi
+    if [ "${#agent_files[@]}" -eq 0 ]; then
+        log_warning "No AI assistant detected; Git/GitHub agent convention not written."
+        return 0
+    fi
+    for agent_file in "${agent_files[@]}"; do
+        agent_file="$(echo "$agent_file" | tr -d '[:space:]')"
+        [ -z "$agent_file" ] && continue
+        git_github_convention_text | hao_write_agent_convention "$agent_file" "HAO-GIT-GITHUB" "$TARGET_USER"
+        log_success "Agent convention written: $agent_file"
+    done
+}
+
 validate_configuration
 TARGET_USER="$(resolve_target_user)"
 readonly TARGET_USER
@@ -264,4 +321,5 @@ else
 fi
 
 configure_identity
+write_agent_convention
 print_result

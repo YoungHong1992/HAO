@@ -63,6 +63,20 @@ HAO_GIT_ALLOW_SERVER_AUTH="yes"
 | `HAO_GIT_ALLOW_IDENTITY_CHANGE` | 条件 | 覆盖不同的已有身份时必须为 `yes` |
 | `HAO_GIT_ALLOW_SERVER_AUTH` | 条件 | 服务器启用个人 Web 授权时必须为 `yes` |
 | `HAO_GIT_CONFIG_ONLY` | 否 | 仅配置现有 Git，不安装软件 |
+| `HAO_GIT_SKIP_AGENT_CONVENTION` | 否 | 设为 `1` 时不向 AI 助手指令文件写入 gh 使用约定 |
+| `HAO_GIT_AGENT_FILES` | 否 | 显式指定约定写入的文件（逗号分隔绝对路径），跳过自动检测 |
+
+## AI 助手约定（gh）
+
+安装后模块会把「GitHub 操作一律使用 `gh`」的约定写入目标用户已安装的 AI 编程助手
+全局指令文件（Claude Code `~/.claude/CLAUDE.md`、Pi `~/.pi/agent/AGENTS.md`、
+Codex CLI `~/.codex/AGENTS.md`、OpenCode `~/.config/opencode/AGENTS.md`，仅写
+检测到的），与 `uv/` 模块使用同一套 `lib/agent-convention.sh` 标记块机制
+（`HAO-GIT-GITHUB BEGIN/END`，幂等、原地更新、不动用户已有内容）。
+
+约定要点：PR/Issue/CI/Release 操作走 `gh` 子命令；裸 API 用 `gh api` 复用登录
+凭据；未登录时提示用户运行 `hao-github-authorize` 而不是代输凭据；禁止在命令行
+与日志中出现 token 值；不擅自修改已配置的提交身份。
 
 GitHub CLI 使用其官方 Debian/Ubuntu仓库和签名密钥。模块接受 GitHub 当前公布的官方
 签名密钥指纹，并拒绝未知签名密钥。

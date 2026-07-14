@@ -54,9 +54,9 @@ printf '== smoke ==\n'
 "$ROOT_DIR/install.sh" >/dev/null
 "$ROOT_DIR/hao" --version >/dev/null
 "$ROOT_DIR/hao" help >/dev/null
-"$ROOT_DIR/hao" plan --services pi >/dev/null
+"$ROOT_DIR/hao" plan --services uv >/dev/null
 "$ROOT_DIR/hao" status >/dev/null
-"$ROOT_DIR/hao" doctor --services pi >/dev/null
+"$ROOT_DIR/hao" doctor --services uv >/dev/null
 "$ROOT_DIR/hao" inventory >/dev/null
 
 printf 'All tests passed.\n'

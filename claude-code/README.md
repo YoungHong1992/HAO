@@ -30,6 +30,7 @@ cd claude-code && sudo ./install.sh
 
 | 变量 | 说明 | 默认 |
 |------|------|------|
+| `HAO_CC_ACTION` | `ensure`（CLI 已安装则保持现有版本）或 `upgrade`（显式升级到最新版） | `ensure` |
 | `HAO_CC_BASE_URL` | Anthropic 兼容网关地址 | 官方 API |
 | `HAO_CC_AUTH_TOKEN` | API token | 无 |
 | `HAO_CC_TOKEN_FILE` | 从文件首行读取 token（优先于 `HAO_CC_AUTH_TOKEN`，避免 token 进入 profile/命令行） | 无 |

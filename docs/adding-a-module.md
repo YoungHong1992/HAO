@@ -5,7 +5,7 @@
 ## 模块类型
 
 - **服务模块**：部署服务器端服务（如 new-api、cliproxyapi）。通常依赖 nginx/docker，写 `/opt`、`/etc/nginx`。
-- **工具模块**：安装终端工具并写用户级配置（如 pi、claude-code）。无服务依赖，配置写入目标用户 home 目录。
+- **工具模块**：安装终端工具并写用户级配置（如 claude-code、uv）。无服务依赖，配置写入目标用户 home 目录。
 
 新的「给某个 CLI 工具装好并配置参数」类需求，参考 `claude-code/` 作为模板。
 
