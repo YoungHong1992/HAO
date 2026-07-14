@@ -37,6 +37,9 @@ Already installed dependencies are detected and skipped unless selected directly
 - `HAO_CLIPROXY_IMAGE`: CliproxyAPI Docker image tag or digest
 - `HAO_DB_TYPE`: `postgresql` or `mysql`
 - `HAO_NEWAPI_IMAGE`: New-API Docker image tag or digest
+- `HAO_NEWAPI_ACTION`: `ensure` (default), `upgrade`, or `migrate-db`. An existing
+  deployment is a no-op under `ensure`; `upgrade` reuses existing secrets and cannot
+  change database engines; automatic cross-engine migration is deliberately refused.
 - `HAO_GIT_NAME`: exact commit display name confirmed by the user; never infer it
 - `HAO_GIT_EMAIL`: exact verified or noreply email confirmed by the user; never infer it
 - `HAO_GIT_TARGET_USER`: OS user that owns the Git/gh configuration
@@ -52,6 +55,8 @@ Already installed dependencies are detected and skipped unless selected directly
 - `HAO_CC_USER`: user whose `~/.claude/settings.json` is written (default: invoking user)
 - `HAO_CC_CONFIGURE_ONLY`: set to `1` to write configuration without installing Node.js/CLI
 - `HAO_CONFIRM_APPLY`: set to `yes` only after user confirmation
+- `HAO_ALLOW_MANAGED_DRIFT`: set to `yes` only after separately reviewing managed drift
+- `HAO_ALLOW_UNTRACKED_OVERWRITE`: set to `yes` only after separately reviewing each untracked target
 
 Only `HAO_*` variables are supported.
 

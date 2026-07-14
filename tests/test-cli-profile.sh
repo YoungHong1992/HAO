@@ -52,6 +52,41 @@ if ! grep -q 'image: example/new-api:v1' <<<"$plan_output"; then
   echo "Plan did not include requested New-API image" >&2
   exit 1
 fi
+
+# Profile database values must override defaults, and an existing deployment is a no-op.
+EXISTING_ROOT="$TMP_DIR/existing-docker"
+mkdir -p "$EXISTING_ROOT/new-api"
+cat > "$EXISTING_ROOT/new-api/docker-compose.yml" <<'EOF'
+services:
+  new-api:
+    image: example/new-api:v1
+  mysql:
+    image: mysql:8.2
+EOF
+existing_output="$(HAO_DOCKER_ROOT="$EXISTING_ROOT" "$ROOT_DIR/hao" plan --services new-api)"
+grep -q 'action: ensure' <<<"$existing_output"
+grep -q 'result: no-op' <<<"$existing_output"
+grep -q 'database: mysql' <<<"$existing_output"
+existing_upgrade_output="$(HAO_DOCKER_ROOT="$EXISTING_ROOT" "$ROOT_DIR/hao" plan \
+  --services new-api --newapi-action upgrade --access-mode http --domain 127.0.0.1)"
+grep -q 'action: upgrade' <<<"$existing_upgrade_output"
+grep -q 'database: mysql' <<<"$existing_upgrade_output"
+
+MYSQL_PROFILE="$TMP_DIR/mysql.env"
+cat > "$MYSQL_PROFILE" <<'EOF'
+HAO_SERVICES="new-api"
+HAO_ACCESS_MODE="http"
+HAO_NEWAPI_DOMAIN="127.0.0.1"
+HAO_DB_TYPE="mysql"
+HAO_NEWAPI_ACTION="ensure"
+EOF
+mysql_profile_output="$(HAO_DOCKER_ROOT="$TMP_DIR/fresh-docker" "$ROOT_DIR/hao" plan --profile "$MYSQL_PROFILE")"
+grep -q 'database: mysql' <<<"$mysql_profile_output"
+
+if HAO_DOCKER_ROOT="$EXISTING_ROOT" "$ROOT_DIR/hao" plan --services new-api --newapi-action upgrade --db-type postgresql >/dev/null 2>&1; then
+  echo "Cross-engine New-API upgrade unexpectedly passed planning" >&2
+  exit 1
+fi
 if ! grep -q 'calciumion/new-api:v1.0.0-rc.21 (release-candidate)' <<<"$plan_output"; then
   echo "Plan did not include reviewed New-API image candidates" >&2
   exit 1

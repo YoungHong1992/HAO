@@ -8,6 +8,17 @@ Always run `preflight` before `apply` on a real host unless the user explicitly 
 
 Only run `apply` after the user has confirmed the plan. Use `--yes` or `HAO_CONFIRM_APPLY=yes` only after that confirmation.
 
+`--yes` does not authorize overwriting drifted or untracked resources. Managed drift
+requires the separate `--allow-managed-drift` / `HAO_ALLOW_MANAGED_DRIFT=yes`
+confirmation. An existing target that is not managed by the selected service requires
+`--allow-untracked-overwrite` / `HAO_ALLOW_UNTRACKED_OVERWRITE=yes`. Review the exact
+paths first; the two confirmations are intentionally independent.
+
+For an existing New-API deployment, the default `ensure` action is a no-op. Use the
+explicit `upgrade` action to refresh its image/config while reusing existing secrets.
+An engine change is not an upgrade, and HAO refuses to present an empty replacement
+database as a migration.
+
 ## Sensitive Values
 
 Do not print passwords, API keys, database passwords, or generated secrets.

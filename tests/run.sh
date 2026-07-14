@@ -27,6 +27,9 @@ printf '== release identity ==\n'
 printf '== ownership state and drift ==\n'
 "$ROOT_DIR/tests/test-state.sh"
 
+printf '== apply resource safety gates ==\n'
+"$ROOT_DIR/tests/test-apply-safety.sh"
+
 printf '== cli profile ==\n'
 "$ROOT_DIR/tests/test-cli-profile.sh"
 

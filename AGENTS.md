@@ -36,6 +36,10 @@ Official OS targets are Debian 13/12 and Ubuntu 26.04/24.04/22.04 LTS.
 5. Run `apply --yes` only after explicit user confirmation.
 6. Run `status` / `doctor` afterwards and summarize.
 
+`--yes` confirms the deployment plan but never authorizes ownership conflicts.
+Managed drift and untracked target overwrites use separate, path-specific review gates:
+`--allow-managed-drift` and `--allow-untracked-overwrite` (or their `HAO_*` equivalents).
+
 Never print secret values. Secrets are written to credential files; report the
 file path, not the content.
 
@@ -78,6 +82,7 @@ HAO_SERVICES="maintenance,nginx,docker,new-api"
 HAO_ACCESS_MODE="domain"        # domain | ip | http
 HAO_NEWAPI_DOMAIN="api.example.com"
 HAO_DB_TYPE="postgresql"        # postgresql | mysql
+HAO_NEWAPI_ACTION="ensure"      # ensure | upgrade | migrate-db
 # HAO_CONFIRM_APPLY="yes"       # set only after the user confirmed the plan
 ```
 
@@ -93,6 +98,10 @@ to the correct internal service while handling HTTPS, standard ports, WebSocket,
 and access logs. Without domains, multiple services on one IP must use different
 ports. Although direct `IP:port` access is technically possible, HAO's supported
 New-API and CliproxyAPI workflows still use Nginx as their common entry point.
+
+Existing New-API deployments are no-op by default. `HAO_NEWAPI_ACTION=upgrade` is an
+explicit refresh that must preserve the existing database, Redis, and session secrets.
+Changing PostgreSQL/MySQL engines is not an upgrade; HAO does not automate that migration.
 
 `git-github` is opt-in and excluded from `--services all`. Its apply step installs
 Git and the official GitHub CLI and configures only the identity values explicitly
