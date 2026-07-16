@@ -721,25 +721,49 @@ fi
 log_success "Xray-core 就绪"
 /usr/local/bin/xray version 2>/dev/null | head -1 || true
 
-# ==================== 步骤 2: 生成密钥 ====================
+# ==================== 步骤 2: 准备密钥 ====================
 
-log_step "[2/6] 生成 X25519 密钥对..."
+log_step "[2/6] 准备 X25519 密钥对..."
 
-KEYS=$(/usr/local/bin/xray x25519 2>/dev/null) || true
-PRIVATE_KEY=$(echo "$KEYS" | grep "^PrivateKey:" | awk '{print $NF}') || true
-PUBLIC_KEY=$(echo "$KEYS" | grep "^Password (PublicKey):" | awk '{print $NF}') || true
-SHORT_ID=$(openssl rand -hex 8 2>/dev/null || head -c 8 /dev/urandom | xxd -p 2>/dev/null || tr -dc 'a-f0-9' < /dev/urandom | head -c 16)
-UUID=$(cat /proc/sys/kernel/random/uuid)
+PRIVATE_KEY=""
+PUBLIC_KEY=""
+SHORT_ID=""
+UUID=""
 
-if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then
-    log_error "密钥生成失败"
-    exit 1
+# 幂等：已有配置则复用现有密钥/UUID/shortId，重跑不轮换凭据、不断开已有客户端。
+if [ -f "$XRAY_DIR/config.json" ]; then
+    PRIVATE_KEY=$(sed -n 's/.*"privateKey": *"\([^"]*\)".*/\1/p' "$XRAY_DIR/config.json" | head -1) || true
+    UUID=$(sed -n 's/.*"id": *"\([^"]*\)".*/\1/p' "$XRAY_DIR/config.json" | head -1) || true
+    SHORT_ID=$(sed -n 's/.*"shortIds": *\["\([^"]*\)"\].*/\1/p' "$XRAY_DIR/config.json" | head -1) || true
+    if [ -n "$PRIVATE_KEY" ] && [ -n "$UUID" ] && [ -n "$SHORT_ID" ]; then
+        PUBLIC_KEY=$(/usr/local/bin/xray x25519 -i "$PRIVATE_KEY" 2>/dev/null \
+            | grep -E '^(Password \(PublicKey\)|PublicKey|Public key):' | awk '{print $NF}' | head -1) || true
+        if [ -n "$PUBLIC_KEY" ]; then
+            log_success "检测到现有配置，复用现有密钥与 UUID（不轮换，不显示）"
+        else
+            log_warning "无法从现有私钥推导公钥，将重新生成密钥对（客户端需更新配置）"
+            PRIVATE_KEY=""
+        fi
+    else
+        PRIVATE_KEY=""
+        UUID=""
+        SHORT_ID=""
+    fi
 fi
 
-echo -e "  Private: ${YELLOW}$PRIVATE_KEY${NC}"
-echo -e "  Public:  ${YELLOW}$PUBLIC_KEY${NC}"
-echo -e "  shortId: ${YELLOW}$SHORT_ID${NC}"
-echo -e "  UUID:    ${YELLOW}$UUID${NC}"
+if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ] || [ -z "$UUID" ] || [ -z "$SHORT_ID" ]; then
+    KEYS=$(/usr/local/bin/xray x25519 2>/dev/null) || true
+    PRIVATE_KEY=$(echo "$KEYS" | grep "^PrivateKey:" | awk '{print $NF}') || true
+    PUBLIC_KEY=$(echo "$KEYS" | grep "^Password (PublicKey):" | awk '{print $NF}') || true
+    SHORT_ID=$(openssl rand -hex 8 2>/dev/null || head -c 8 /dev/urandom | xxd -p 2>/dev/null || tr -dc 'a-f0-9' < /dev/urandom | head -c 16)
+    UUID=$(cat /proc/sys/kernel/random/uuid)
+
+    if [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ]; then
+        log_error "密钥生成失败"
+        exit 1
+    fi
+    log_success "已生成新密钥对与 UUID（密钥值不输出到终端/日志，见凭据文件）"
+fi
 
 # ==================== 步骤 3: 下载 geo 数据 ====================
 
@@ -799,6 +823,9 @@ cat > "$XRAY_DIR/config.json" <<XEOF
 }
 XEOF
 
+# 配置文件包含 Reality 私钥，收紧权限
+chmod 600 "$XRAY_DIR/config.json"
+
 log_success "配置完成"
 
 # ==================== 步骤 5: 启动 ====================
@@ -836,6 +863,9 @@ log_success "BBR 就绪"
 SERVER_IP=$(detect_server_ip)
 VLESS_LINK="vless://$UUID@$SERVER_IP:$REALITY_PORT?type=tcp&security=reality&flow=xtls-rprx-vision&fp=chrome&sni=$DEST_SNI&pbk=$PUBLIC_KEY&sid=$SHORT_ID#MeiDe_Reality"
 
+# 凭据文件 0600：包含 UUID / 公钥 / shortId / 分享链接，属于连接凭据
+touch "$INFO_FILE"
+chmod 600 "$INFO_FILE"
 cat > "$INFO_FILE" <<EOF
 ================================================
      VLESS + Reality 节点配置
@@ -901,9 +931,7 @@ echo ""
 echo -e "伪装: ${GREEN}$DEST_SNI${NC}"
 echo -e "端口: ${GREEN}$REALITY_PORT${NC}"
 echo ""
-echo -e "${CYAN}▸ 分享链接:${NC}"
-echo -e "${BOLD}$VLESS_LINK${NC}"
-echo ""
-echo -e "详情: ${YELLOW}$INFO_FILE${NC}"
+echo -e "${CYAN}▸ 连接参数与分享链接已写入凭据文件（0600，不在终端/日志显示）:${NC}"
+echo -e "${BOLD}$INFO_FILE${NC}"
 echo ""
 log_success "日志已保存: $DEPLOY_LOG_FILE"
