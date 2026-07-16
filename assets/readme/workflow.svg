@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="380" viewBox="0 0 1200 380" role="img" aria-labelledby="title desc">
+  <title id="title">HAO 部署工作流</title>
+  <desc id="desc">六个阶段：问询与 Profile、hao plan、hao preflight、用户确认（sudo 加 --yes）、hao apply、status 与 doctor。plan、preflight、status、doctor 均为只读；apply 是唯一修改系统的步骤，且必须显式确认。</desc>
+
+  <rect width="1200" height="380" rx="20" fill="#0A0E14"/>
+
+  <text x="64" y="56" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14" letter-spacing="3" fill="#E8A03E">HAO WORKFLOW</text>
+  <text x="64" y="88" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="20" fill="#E6E1D6">计划先行 · 确认后执行</text>
+
+  <!-- 阶段卡片 -->
+  <g>
+    <rect x="90" y="120" width="150" height="96" rx="12" fill="#0F141D" stroke="#273140" stroke-width="1.5"/>
+    <rect x="264" y="120" width="150" height="96" rx="12" fill="#0F141D" stroke="#273140" stroke-width="1.5"/>
+    <rect x="438" y="120" width="150" height="96" rx="12" fill="#0F141D" stroke="#273140" stroke-width="1.5"/>
+    <rect x="612" y="120" width="150" height="96" rx="12" fill="#14100A" stroke="#E8A03E" stroke-width="1.5"/>
+    <rect x="786" y="120" width="150" height="96" rx="12" fill="#0F141D" stroke="#3A4656" stroke-width="1.5"/>
+    <rect x="960" y="120" width="150" height="96" rx="12" fill="#0F141D" stroke="#273140" stroke-width="1.5"/>
+  </g>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" fill="#7D8590">
+    <text x="106" y="144">01</text>
+    <text x="280" y="144">02</text>
+    <text x="454" y="144">03</text>
+    <text x="628" y="144" fill="#E8A03E">04</text>
+    <text x="802" y="144">05</text>
+    <text x="976" y="144">06</text>
+  </g>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="15" fill="#E6E1D6">
+    <text x="106" y="172">问询与 Profile</text>
+    <text x="628" y="172" fill="#E8A03E">用户确认</text>
+  </g>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="15" fill="#E6E1D6">
+    <text x="280" y="172">hao plan</text>
+    <text x="454" y="172">hao preflight</text>
+    <text x="802" y="172">hao apply</text>
+    <text x="976" y="172">status·doctor</text>
+  </g>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="12.5" fill="#7D8590">
+    <text x="106" y="196">确认目标 → deploy.env</text>
+    <text x="280" y="196">输出变更计划</text>
+    <text x="454" y="196">检查 OS·DNS·端口</text>
+    <text x="628" y="196" fill="#B98432">sudo + --yes</text>
+    <text x="802" y="196">非交互执行改动</text>
+    <text x="976" y="196">状态与漂移审计</text>
+  </g>
+
+  <!-- 阶段间箭头 -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" fill="#7D8590" text-anchor="middle">
+    <text x="252" y="174">→</text>
+    <text x="426" y="174">→</text>
+    <text x="600" y="174">→</text>
+    <text x="774" y="174">→</text>
+    <text x="948" y="174">→</text>
+  </g>
+
+  <!-- 只读 / 修改系统 括号标注 -->
+  <path d="M 264 240 v 8 h 324 v -8" fill="none" stroke="#4BB365" stroke-width="1.5"/>
+  <text x="426" y="272" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="13" fill="#4BB365" text-anchor="middle">只读 · 不修改系统</text>
+
+  <path d="M 786 240 v 8 h 150 v -8" fill="none" stroke="#E8A03E" stroke-width="1.5"/>
+  <text x="861" y="272" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="13" fill="#E8A03E" text-anchor="middle">唯一修改系统的步骤</text>
+
+  <path d="M 960 240 v 8 h 150 v -8" fill="none" stroke="#4BB365" stroke-width="1.5"/>
+  <text x="1035" y="272" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="13" fill="#4BB365" text-anchor="middle">只读</text>
+
+  <!-- 附加确认门说明 -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.5" fill="#7D8590">
+    <text x="90" y="326">--yes 只确认部署计划，不授权覆盖所有权冲突；</text>
+    <text x="90" y="350">受管漂移 / 未跟踪文件覆盖需单独 --allow-managed-drift / --allow-untracked-overwrite 逐项审查</text>
+  </g>
+</svg>

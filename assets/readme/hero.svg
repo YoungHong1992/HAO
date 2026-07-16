@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">HAO（HongAgentOps）— AI 原生服务器部署工具</title>
+  <desc id="desc">让 AI agent 安全地替你部署 VPS 服务器：计划先行、确认后执行、全程可审计。右侧为 hao plan 命令的真实只读输出节选。</desc>
+
+  <rect width="1200" height="360" rx="20" fill="#0A0E14"/>
+
+  <!-- 左侧：标题区 -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+    <text x="64" y="84" font-size="14" letter-spacing="3" fill="#E8A03E">AI-NATIVE VPS DEPLOYMENT · PURE BASH</text>
+  </g>
+
+  <text x="60" y="158" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="72" font-weight="800" fill="#E6E1D6">HAO</text>
+  <text x="238" y="156" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" fill="#7D8590">HongAgentOps</text>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif">
+    <text x="64" y="204" font-size="23" fill="#E6E1D6">让 AI agent 安全地替你部署服务器</text>
+    <text x="64" y="236" font-size="16" fill="#7D8590">人确认目标与风险，AI 生成计划并执行 · 没有终端菜单，只有确定性 CLI</text>
+  </g>
+
+  <!-- 工作流 motif -->
+  <text x="64" y="276" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14">
+    <tspan fill="#4BB365">plan</tspan><tspan fill="#7D8590"> → </tspan><tspan fill="#4BB365">preflight</tspan><tspan fill="#7D8590"> → </tspan><tspan fill="#E8A03E">[ --yes ]</tspan><tspan fill="#7D8590"> → </tspan><tspan fill="#E6E1D6">apply</tspan><tspan fill="#7D8590"> → </tspan><tspan fill="#4BB365">status / doctor</tspan>
+  </text>
+
+  <text x="64" y="318" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" letter-spacing="1" fill="#7D8590">PURE BASH · 零依赖 · DEBIAN / UBUNTU · MIT</text>
+
+  <!-- 右侧：真实 plan 输出终端卡片 -->
+  <rect x="648" y="40" width="488" height="284" rx="12" fill="#0F141D" stroke="#1F2733" stroke-width="1.5"/>
+  <circle cx="676" cy="72" r="5" fill="#2E3947"/>
+  <circle cx="696" cy="72" r="5" fill="#2E3947"/>
+  <circle cx="716" cy="72" r="5" fill="#2E3947"/>
+  <text x="736" y="77" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" fill="#7D8590">hao plan — 只读，不修改系统</text>
+  <line x1="648" y1="92" x2="1136" y2="92" stroke="#1C2430" stroke-width="1"/>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14">
+    <text x="676" y="120"><tspan fill="#E8A03E">❯</tspan><tspan fill="#E6E1D6"> ./hao plan --services new-api</tspan></text>
+    <text x="676" y="143" fill="#E6E1D6">      --domain api.example.com</text>
+    <text x="676" y="166" fill="#E6E1D6">HAO deployment plan</text>
+    <text x="676" y="189" fill="#7D8590">  - New-API   action: ensure</text>
+    <text x="676" y="212" fill="#7D8590">    dependencies: nginx docker</text>
+    <text x="676" y="235" fill="#7D8590">    endpoint: api.example.com</text>
+    <text x="676" y="258" fill="#7D8590">    image: calciumion/new-api:latest</text>
+    <text x="676" y="281" fill="#7D8590">System changes expected: …</text>
+    <text x="676" y="304" fill="#4BB365">  secrets → 凭据文件，永不打印 ✓</text>
+  </g>
+</svg>
