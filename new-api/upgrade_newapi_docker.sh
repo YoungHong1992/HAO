@@ -619,6 +619,26 @@ DOCKER_ROOT="/opt/docker-services"
 SERVICE_DIR="$DOCKER_ROOT/new-api"
 COMPOSE_FILE="$SERVICE_DIR/docker-compose.yml"
 
+# 回滚：恢复 compose 备份，并把升级前记录的旧镜像 ID 重新打回原标签。
+# 仅恢复 compose 是不够的——latest 标签升级前后文件内容相同，
+# up -d 仍会用新拉取的镜像；必须 docker tag 回旧镜像 ID 才是真回滚。
+rollback_to_previous_image() {
+    log_error "正在回滚到旧版本..."
+    cp "$BACKUP_FILE" "$COMPOSE_FILE"
+    if [ -n "$CURRENT_IMAGE" ]; then
+        if docker tag "$CURRENT_IMAGE" "$IMAGE_NAME" 2>/dev/null; then
+            log_info "旧镜像已重新标记: ${CURRENT_IMAGE:0:12} -> $IMAGE_NAME"
+        else
+            log_warning "旧镜像重新打标失败（可能已被清理）: ${CURRENT_IMAGE:0:12}"
+        fi
+    else
+        log_warning "升级前未记录到旧镜像 ID，无法回退镜像本体，仅恢复 compose 配置"
+    fi
+    $COMPOSE_CMD down 2>/dev/null || true
+    $COMPOSE_CMD up -d || true
+    log_warning "已回滚到旧版本"
+}
+
 # ==================== 环境检查 ====================
 check_root
 setup_logging "newapi-upgrade"
@@ -721,21 +741,16 @@ if $COMPOSE_CMD down && $COMPOSE_CMD up -d; then
 
     log_info "等待服务启动..."
     if ! wait_for_healthy "$COMPOSE_CMD" "$SERVICE_DIR" 60 5 "new-api"; then
-        log_error "服务健康检查失败，正在回滚..."
-        cp "$BACKUP_FILE" "$COMPOSE_FILE"
-        $COMPOSE_CMD down 2>/dev/null || true
-        $COMPOSE_CMD up -d || true
-        log_warning "已回滚到旧版本"
+        log_error "服务健康检查失败"
+        rollback_to_previous_image
         exit 1
     fi
 
     if $COMPOSE_CMD ps 2>/dev/null | grep -q "Up"; then
         log_success "服务运行正常"
     else
-        log_error "服务启动失败，正在回滚..."
-        cp "$BACKUP_FILE" "$COMPOSE_FILE"
-        $COMPOSE_CMD up -d || true
-        log_warning "已回滚到旧版本"
+        log_error "服务启动失败"
+        rollback_to_previous_image
         exit 1
     fi
 else

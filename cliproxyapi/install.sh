@@ -742,7 +742,8 @@ if [ "$IS_UPGRADE" = false ]; then
         DOMAIN=$(get_domain_for_mode "$MODE")
 
         echo ""
-        read -r -p "请输入管理面板密码: " ADMIN_SECRET
+        read -r -s -p "请输入管理面板密码（输入不回显）: " ADMIN_SECRET
+        echo "" >&2
         if [ -z "$ADMIN_SECRET" ]; then
             log_error "管理面板密码不能为空。"
             exit 1

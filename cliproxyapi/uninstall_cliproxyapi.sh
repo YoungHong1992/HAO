@@ -633,16 +633,58 @@ fi
 
 echo ""
 
-# ==================== 1. 停止并删除 Docker Compose 服务 ====================
-log_step "[1/7] 停止并删除 Docker Compose 服务..."
-
 DOCKER_SERVICE_DIR="/opt/docker-services/cliproxyapi"
 COMPOSE_CMD=$(detect_compose_cmd)
 
+# ==================== 1. 备份配置 / 凭据 / 授权数据 ====================
+log_step "[1/8] 备份配置与凭据..."
+
+BACKUP_ARCHIVE=""
+BACKUP_SOURCES=()
+for backup_path in \
+    "$DOCKER_SERVICE_DIR/config.yaml" \
+    "$DOCKER_SERVICE_DIR/auths" \
+    "$DOCKER_SERVICE_DIR/hao-credentials.txt" \
+    /etc/cliproxyapi \
+    /var/lib/cliproxyapi \
+    /opt/cliproxyapi/hao-credentials.txt; do
+    [ -e "$backup_path" ] && BACKUP_SOURCES+=("$backup_path")
+done
+
+if [ "${#BACKUP_SOURCES[@]}" -gt 0 ]; then
+    read -r -p "是否备份配置、凭据文件和 OAuth 授权数据？(Y/n): " BACKUP_CHOICE
+    if [[ ! "$BACKUP_CHOICE" =~ ^[Nn]$ ]]; then
+        BACKUP_ARCHIVE="/backup/cliproxyapi-uninstall-$(date +%Y%m%d_%H%M%S).tar.gz"
+        mkdir -p "$(dirname "$BACKUP_ARCHIVE")"
+        # 备份内容包含密钥：先建 0600 空文件再写入，避免落盘瞬间可读
+        touch "$BACKUP_ARCHIVE"
+        chmod 600 "$BACKUP_ARCHIVE"
+        if tar -czf "$BACKUP_ARCHIVE" "${BACKUP_SOURCES[@]}" 2>/dev/null; then
+            log_success "备份已保存: $BACKUP_ARCHIVE（0600，包含密钥，请妥善保管）"
+        else
+            rm -f "$BACKUP_ARCHIVE"
+            BACKUP_ARCHIVE=""
+            log_warning "备份失败；如需保留凭据请先手动备份。"
+            read -r -p "备份失败，仍要继续卸载吗？(y/N): " CONTINUE_CHOICE
+            if [[ ! "$CONTINUE_CHOICE" =~ ^[Yy]$ ]]; then
+                log_info "已取消卸载。"
+                exit 0
+            fi
+        fi
+    else
+        log_info "跳过备份"
+    fi
+else
+    log_info "未发现可备份的配置/凭据"
+fi
+
+# ==================== 2. 停止并删除 Docker Compose 服务 ====================
+log_step "[2/8] 停止并删除 Docker Compose 服务..."
+
 if [ -f "$DOCKER_SERVICE_DIR/docker-compose.yml" ] && [ -n "$COMPOSE_CMD" ]; then
-    if [ -f "$DOCKER_SERVICE_DIR/config.yaml" ]; then
-        echo -e "${YELLOW}当前 Docker 部署 API 密钥:${NC}"
-        grep -A 2 "api-keys:" "$DOCKER_SERVICE_DIR/config.yaml" 2>/dev/null | grep "sk-" | sed 's/^/  /' || true
+    # 密钥值不在终端/日志显示；如已备份，可从备份包中的凭据文件查看
+    if [ -n "$BACKUP_ARCHIVE" ]; then
+        log_info "API 密钥已随备份保存（不在终端显示）: $BACKUP_ARCHIVE"
     fi
     (cd "$DOCKER_SERVICE_DIR" && $COMPOSE_CMD down) || true
     rm -rf "$DOCKER_SERVICE_DIR"
@@ -653,8 +695,8 @@ else
     log_info "未检测到 Docker Compose 部署，跳过"
 fi
 
-# ==================== 2. 停止并删除 Systemd 服务 ====================
-log_step "[2/7] 停止并删除 Systemd 服务..."
+# ==================== 3. 停止并删除 Systemd 服务 ====================
+log_step "[3/8] 停止并删除 Systemd 服务..."
 
 if systemctl list-units --full -all 2>/dev/null | grep -q "cliproxyapi.service"; then
     systemctl stop cliproxyapi 2>/dev/null || true
@@ -670,28 +712,28 @@ if [ -f /etc/systemd/system/cliproxyapi.service ]; then
     log_success "服务文件已删除"
 fi
 
-# ==================== 3. 删除程序文件 ====================
-log_step "[3/7] 删除程序文件..."
+# ==================== 4. 删除程序文件 ====================
+log_step "[4/8] 删除程序文件..."
 
 if [ -d /opt/cliproxyapi ]; then
     rm -rf /opt/cliproxyapi
     log_success "程序目录已删除: /opt/cliproxyapi"
 fi
 
-# ==================== 4. 删除配置文件 ====================
-log_step "[4/7] 删除配置文件..."
+# ==================== 5. 删除配置文件 ====================
+log_step "[5/8] 删除配置文件..."
 
 if [ -d /etc/cliproxyapi ]; then
-    if [ -f /etc/cliproxyapi/config.yaml ]; then
-        echo -e "${YELLOW}当前 API 密钥:${NC}"
-        grep -A 2 "api-keys:" /etc/cliproxyapi/config.yaml 2>/dev/null | grep "sk-" | sed 's/^/  /' || true
+    # 密钥值不在终端/日志显示；如已备份，可从备份包中查看
+    if [ -n "$BACKUP_ARCHIVE" ]; then
+        log_info "配置中的 API 密钥已随备份保存（不在终端显示）: $BACKUP_ARCHIVE"
     fi
     rm -rf /etc/cliproxyapi
     log_success "配置目录已删除: /etc/cliproxyapi"
 fi
 
-# ==================== 5. 删除数据和日志 ====================
-log_step "[5/7] 删除数据与日志..."
+# ==================== 6. 删除数据和日志 ====================
+log_step "[6/8] 删除数据与日志..."
 
 rm -rf /var/lib/cliproxyapi 2>/dev/null || true
 log_success "数据目录已删除"
@@ -700,8 +742,8 @@ rm -rf /var/log/cliproxyapi 2>/dev/null || true
 rm -f /var/log/nginx/cliproxyapi_*.log 2>/dev/null || true
 log_success "日志已清理"
 
-# ==================== 6. 删除 Nginx 配置 ====================
-log_step "[6/7] 删除 Nginx 配置..."
+# ==================== 7. 删除 Nginx 配置 ====================
+log_step "[7/8] 删除 Nginx 配置..."
 
 NGINX_CONF_DIR="/etc/nginx/conf.d"
 CLIPROXY_CONFIGS=$(find "$NGINX_CONF_DIR" -name "*.conf" -exec grep -l "cliproxyapi\|8317" {} \; 2>/dev/null || true)
@@ -747,8 +789,8 @@ else
     log_info "未找到相关 Nginx 配置"
 fi
 
-# ==================== 7. 清理源码（可选） ====================
-log_step "[7/7] 清理残留..."
+# ==================== 8. 清理源码（可选） ====================
+log_step "[8/8] 清理残留..."
 
 if [ -d /usr/local/src/CLIProxyAPI ]; then
     echo ""
@@ -768,5 +810,8 @@ echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━
 echo ""
 echo -e "${CYAN}已删除:${NC} Docker Compose 服务 / Systemd 服务 / 程序 / 配置 / 数据 / 日志 / Nginx 配置"
 echo -e "${CYAN}保留:${NC} Nginx 主程序 / 其他服务 / SSL 证书（如选择）"
+if [ -n "$BACKUP_ARCHIVE" ]; then
+    echo -e "${CYAN}备份:${NC} $BACKUP_ARCHIVE（0600，包含密钥，请妥善保管）"
+fi
 echo ""
 log_success "日志已保存: $DEPLOY_LOG_FILE"

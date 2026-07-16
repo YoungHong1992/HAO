@@ -35,6 +35,19 @@ hao_write_agent_convention() {
     local begin="<!-- ${marker} BEGIN (managed by HAO, do not edit inside) -->"
     local end="<!-- ${marker} END -->"
     local dir tmp probe missing_dirs=() created_dir owner_group
+    local has_begin=false has_end=false
+
+    # 标记块必须成对出现；只剩单边标记说明用户手工改坏了文件，
+    # 此时原地替换会吞掉标记之后的用户内容，必须拒绝写入。
+    if [ -f "$file" ]; then
+        if grep -qF "$begin" "$file"; then has_begin=true; fi
+        if grep -qF "$end" "$file"; then has_end=true; fi
+        if [ "$has_begin" != "$has_end" ]; then
+            echo "hao_write_agent_convention: ${marker} 标记块不成对（BEGIN/END 只找到一个），拒绝改写: $file" >&2
+            echo "请手工修复或删除残留标记后重试。" >&2
+            return 1
+        fi
+    fi
 
     dir="$(dirname "$file")"
     # 记录将要新建的目录层级，写入后归属目标用户，避免留下 root 属主的用户目录
