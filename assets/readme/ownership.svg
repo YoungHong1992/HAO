@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="title desc">
+  <title id="title">HAO 资源归属模型</title>
+  <desc id="desc">HAO 把系统资源分为四类：managed 由 HAO 生成并维护并做漂移校验；shared 属于整个系统不可独占；observed 仅记录存在；secret 只记录凭据文件路径，值与哈希均隐藏。无 HAO 标识的配置视为外部资源默认保留。</desc>
+
+  <rect width="1200" height="300" rx="20" fill="#0A0E14"/>
+
+  <text x="64" y="56" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14" letter-spacing="3" fill="#E8A03E">OWNERSHIP MODEL</text>
+  <text x="1136" y="56" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13" fill="#7D8590" text-anchor="end">/var/lib/hao/manifest.json</text>
+
+  <g>
+    <rect x="64" y="84" width="252" height="124" rx="12" fill="#0F141D" stroke="#E8A03E" stroke-width="1.5"/>
+    <rect x="340" y="84" width="252" height="124" rx="12" fill="#0F141D" stroke="#273140" stroke-width="1.5"/>
+    <rect x="616" y="84" width="252" height="124" rx="12" fill="#0F141D" stroke="#273140" stroke-width="1.5"/>
+    <rect x="892" y="84" width="252" height="124" rx="12" fill="#0F141D" stroke="#273140" stroke-width="1.5"/>
+  </g>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">
+    <text x="88" y="122" fill="#E8A03E">managed</text>
+    <text x="364" y="122" fill="#E6E1D6">shared</text>
+    <text x="640" y="122" fill="#E6E1D6">observed</text>
+    <text x="916" y="122" fill="#4BB365">secret</text>
+  </g>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="13.5" fill="#E6E1D6">
+    <text x="88" y="152">HAO 生成并维护</text>
+    <text x="364" y="152">调整过，但属于系统</text>
+    <text x="640" y="152">仅记录它的存在</text>
+    <text x="916" y="152">只记录凭据文件路径</text>
+  </g>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="12.5" fill="#7D8590">
+    <text x="88" y="178">doctor 校验哈希与漂移</text>
+    <text x="364" y="178">不独占 · 不随意覆盖</text>
+    <text x="640" y="178">不声称拥有它</text>
+    <text x="916" y="178">值与哈希一律隐藏</text>
+  </g>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif" font-size="13" fill="#7D8590">
+    <text x="64" y="248">无 HAO 标识的现有配置 = 外部资源，默认保留 · 受管文件被人工修改时，doctor 只报告漂移、不自动覆盖</text>
+    <text x="64" y="274">HAO 生成的配置带 Managed by HAO 注释与发布标识 · Docker 资源带 io.hao.* labels</text>
+  </g>
+</svg>
