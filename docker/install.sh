@@ -26,6 +26,8 @@
 #
 ################################################################################
 
+set -euo pipefail
+
 # ==================== 自包含公共函数 ====================
 # 本脚本可独立运行，不依赖外部公共库。
 # shellcheck disable=SC2034
@@ -719,6 +721,9 @@ ensure_docker() {
     log_step "安装 Docker..."
     echo ""
 
+    # 非交互 apt，避免 conffile 提示挂起无人值守安装
+    export DEBIAN_FRONTEND=noninteractive
+
     # 先修复 apt 源
     fix_apt_sources
 
@@ -729,9 +734,10 @@ ensure_docker() {
     # 默认使用显式仓库安装，避免执行远程安装脚本。
     echo -e "${DIM}使用 Docker 官方软件仓库安装...${NC}"
 
+    local distro="unknown"
     if [ -f /etc/os-release ]; then
         . /etc/os-release
-        local distro="$ID"
+        distro="$ID"
     fi
 
     case "$distro" in

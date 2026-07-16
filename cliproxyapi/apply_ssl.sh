@@ -771,13 +771,17 @@ fi
 
 log_step "[3/3] 配置 Nginx..."
 
+FINAL_CONF=""
+CONF_BACKUP=""
 if [ -n "$SERVICE" ]; then
     if [ "$TEMP_CONF" = true ]; then
         FINAL_CONF="$CONF_D/${DOMAIN}.conf"
     else
         FINAL_CONF="$NGINX_CONF"
         if [ -f "$FINAL_CONF" ]; then
-            backup_file "$FINAL_CONF"
+            CONF_BACKUP="${FINAL_CONF}.bak.$(date +%Y%m%d_%H%M%S)"
+            cp -a "$FINAL_CONF" "$CONF_BACKUP"
+            log_info "已备份: $CONF_BACKUP"
         fi
     fi
 
@@ -808,7 +812,7 @@ server {
     ssl_certificate_key $DOMAIN_SSL_DIR/key.pem;
     ${NGINX_SSL_CONFIG}
 
-    access_log /var/log/nginx/${SERVICE}_access.log main;
+    access_log /var/log/nginx/${SERVICE}_access.log;
     error_log /var/log/nginx/${SERVICE}_error.log warn;
 
     location / {
@@ -875,6 +879,17 @@ if nginx -t >/dev/null 2>&1; then
 else
     log_error "Nginx 配置测试失败，请检查配置"
     nginx -t 2>&1 || true
+    # 恢复到写入前的状态，避免留下坏配置阻塞下一次 reload
+    if [ -n "$FINAL_CONF" ] && [ -f "$FINAL_CONF" ]; then
+        if [ -n "$CONF_BACKUP" ] && [ -f "$CONF_BACKUP" ]; then
+            cp -a "$CONF_BACKUP" "$FINAL_CONF"
+            log_warning "已恢复备份配置: $FINAL_CONF"
+        else
+            rm -f "$FINAL_CONF"
+            log_warning "已移除失败生成的配置: $FINAL_CONF"
+        fi
+        nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+    fi
     exit 1
 fi
 

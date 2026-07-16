@@ -266,20 +266,32 @@ log_error()   { echo -e "${RED}[ERROR]${NC} $(date '+%H:%M:%S') $*" >&2; }
 log_step()    { echo -e "${CYAN}[STEP]${NC} $(date '+%H:%M:%S') $*" >&2; }
 log_debug()   { echo -e "${DIM}[DEBUG]${NC} $(date '+%H:%M:%S') $*" >&2; }
 
+# 与 lib/crypto.sh 保持同步：生成失败必须显式报错，而不是静默返回空密钥。
+hao_random_alnum() {
+    local length="$1" value="" chunk
+    while [ "${#value}" -lt "$length" ]; do
+        chunk="$(openssl rand -base64 64 2>/dev/null | tr -dc 'a-zA-Z0-9')" || chunk=""
+        if [ -z "$chunk" ]; then
+            echo "hao_random_alnum: secure random generation failed (is openssl installed?)" >&2
+            return 1
+        fi
+        value="${value}${chunk}"
+    done
+    printf '%s' "${value:0:length}"
+}
+
 generate_password() {
-    local length="${1:-32}"
-    openssl rand -base64 48 2>/dev/null | tr -dc 'a-zA-Z0-9' | head -c "$length"
+    hao_random_alnum "${1:-32}"
 }
 
 generate_session_secret() {
-    local length="${1:-48}"
-    openssl rand -base64 64 2>/dev/null | tr -dc 'a-zA-Z0-9' | head -c "$length"
+    hao_random_alnum "${1:-48}"
 }
 
 generate_api_key() {
     local prefix="${1:-sk-}"
     local key_body
-    key_body=$(openssl rand -base64 48 2>/dev/null | tr -dc 'a-zA-Z0-9' | head -c 45)
+    key_body="$(hao_random_alnum 45)" || return 1
     echo "${prefix}${key_body}"
 }
 

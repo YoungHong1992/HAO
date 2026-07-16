@@ -740,6 +740,10 @@ check_root
 setup_logging "nginx-install"
 handle_existing_nginx
 
+# 非交互 apt：机器上已有发行版 nginx 时，dpkg 的 conffile 提示会挂起
+# `hao apply`，必须显式关闭前端并保留现有配置文件。
+export DEBIAN_FRONTEND=noninteractive
+
 log_step "[1/3] 系统环境检查与优化..."
 
 # 1. 内核参数优化 (开启 BBR + TCP 调优)
@@ -826,7 +830,7 @@ Pin-Priority: 900
 APT_PREF_EOF
 
     apt-get update -y -qq
-    apt-get install -y nginx
+    apt-get install -y -o Dpkg::Options::=--force-confold nginx
 
     log_success "Nginx 安装完成"
 
