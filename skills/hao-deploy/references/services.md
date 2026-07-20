@@ -35,6 +35,9 @@ Already installed dependencies are detected and skipped unless selected directly
 - `HAO_NEWAPI_DOMAIN`: New-API endpoint
 - `HAO_CLIPROXY_MODE`: `docker` or `bare`
 - `HAO_CLIPROXY_IMAGE`: CliproxyAPI Docker image tag or digest
+- `HAO_ADMIN_PASSWORD` (CLI: `--admin-password`): CliproxyAPI management panel
+  password; auto-generated when omitted. Prefer omitting it so the generated value
+  only lands in the credentials file — never echo or log the value either way.
 - `HAO_DB_TYPE`: `postgresql` or `mysql`
 - `HAO_NEWAPI_IMAGE`: New-API Docker image tag or digest
 - `HAO_NEWAPI_ACTION`: `ensure` (default), `upgrade`, or `migrate-db`. An existing

@@ -254,6 +254,8 @@ setup_logging() {
     local script_name="${1:-deploy}"
     mkdir -p "$DEPLOY_LOG_DIR"
     DEPLOY_LOG_FILE="${DEPLOY_LOG_DIR}/${script_name}-$(date +%Y%m%d-%H%M%S).log"
+    # 日志可能包含敏感上下文，先以 600 权限建档再追加写入
+    install -m 600 /dev/null "$DEPLOY_LOG_FILE"
     exec > >(tee -a "$DEPLOY_LOG_FILE") 2>&1
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] === 日志开始: $DEPLOY_LOG_FILE ==="
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] 脚本: $script_name"
@@ -869,7 +871,6 @@ readonly DEFAULT_ALL_SERVICES=(
 # Runtime state
 declare -A ALREADY_INSTALLED   # true if already present on system
 declare -A TO_INSTALL          # true if user selected to install
-declare -A FORCE_INSTALL       # true if installed service is explicitly selected for reinstall
 declare -A SERVICE_DOMAIN      # per Web service domain/IP
 declare -A INSTALL_FAILED      # true if service failed/skipped due dependency
 INSTALL_ORDER=()               # resolved dependency order
@@ -886,6 +887,7 @@ DB_TYPE_EXPLICIT=false
 NEWAPI_ACTION="ensure"         # ensure | upgrade | migrate-db
 NEWAPI_EXISTING_DB_TYPE=""
 CLIPROXY_IMAGE=""
+CLIPROXY_IMAGE_EXPLICIT=false
 NEWAPI_IMAGE=""
 GIT_NAME=""
 GIT_EMAIL=""
@@ -901,7 +903,6 @@ ALLOW_UNTRACKED_OVERWRITE=false
 
 reset_iteration_state() {
     TO_INSTALL=()
-    FORCE_INSTALL=()
     SERVICE_DOMAIN=()
     INSTALL_FAILED=()
     INSTALL_ORDER=()
@@ -917,6 +918,7 @@ reset_iteration_state() {
     NEWAPI_ACTION=""
     NEWAPI_EXISTING_DB_TYPE=""
     CLIPROXY_IMAGE=""
+    CLIPROXY_IMAGE_EXPLICIT=false
     NEWAPI_IMAGE=""
     GIT_NAME=""
     GIT_EMAIL=""
@@ -1157,10 +1159,11 @@ service_will_mutate() {
 }
 
 needs_access_mode() {
+    # 与 service_will_mutate 口径一致：只要 apply 会真实重跑 Web 服务安装器
+    # （可能改写 Nginx 配置与证书），就需要访问模式与 DNS/端口检查。
     local svc
     for svc in "${INSTALL_ORDER[@]}"; do
-        if is_web_service "$svc" && service_will_mutate "$svc" \
-            && { [ "${ALREADY_INSTALLED[$svc]:-}" != "true" ] || [ "${FORCE_INSTALL[$svc]:-}" = "true" ]; }; then
+        if is_web_service "$svc" && service_will_mutate "$svc"; then
             return 0
         fi
     done
@@ -1436,6 +1439,7 @@ run_install() {
                 extra_env+=("HAO_CLIPROXY_MODE=$CLIPROXY_DEPLOY_MODE")
                 if [ "$CLIPROXY_DEPLOY_MODE" = "docker" ]; then
                     extra_env+=("HAO_CLIPROXY_IMAGE=$CLIPROXY_IMAGE")
+                    extra_env+=("HAO_CLIPROXY_IMAGE_EXPLICIT=$CLIPROXY_IMAGE_EXPLICIT")
                 fi
                 [ -n "$ADMIN_PASSWORD" ] && extra_env+=("HAO_ADMIN_PASSWORD=$ADMIN_PASSWORD")
                 ;;
@@ -1469,7 +1473,13 @@ run_install() {
         # The root installer only resolves order and passes collected config.
         # Execute component install.sh directly (not via 'bash') to preserve $0
         # for scripts that use BASH_SOURCE==$0 guards.
-        if env "${extra_env[@]}" "$script"; then
+        # 在子 shell 内 export 后 exec，避免密码等秘密出现在 env 进程的命令行上（ps 可见）。
+        if (
+            for kv in "${extra_env[@]}"; do
+                export "${kv?}"
+            done
+            exec "$script"
+        ); then
             log_success "$name 安装成功"
             INSTALL_RESULTS+=("✓ $name")
             ALREADY_INSTALLED[$svc]=true
@@ -1740,7 +1750,13 @@ load_profile_file() {
                 value="${value:1:${#value}-2}"
                 ;;
             *)
-                value="${value%%#*}"
+                # 仅当 # 位于值首或前有空白时才视为行尾注释；
+                # 密码等含 # 的值（如 secret#123）不会被静默截断。
+                if [[ "$value" == \#* ]]; then
+                    value=""
+                elif [[ "$value" == *[[:space:]]\#* ]]; then
+                    value="${value%%[[:space:]]\#*}"
+                fi
                 value="$(trim_value "$value")"
                 ;;
         esac
@@ -1758,6 +1774,13 @@ CLI_STATUS_SERVICES=""
 CLI_CLIPROXY_DOMAIN=""
 CLI_NEWAPI_DOMAIN=""
 
+# shift 2 在剩余参数不足时返回非零且不移位，此时 $1 仍是缺值的选项名
+missing_option_value() {
+    echo "[ERROR] 选项 $1 缺少取值。" >&2
+    cli_usage >&2
+    exit 1
+}
+
 parse_cli_args() {
     CLI_COMMAND="$1"
     shift || true
@@ -1770,81 +1793,81 @@ parse_cli_args() {
                 ;;
             --profile)
                 CLI_PROFILE="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --services|--service)
                 CLI_SERVICES="${2:-}"
                 CLI_STATUS_SERVICES="$CLI_SERVICES"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --access-mode)
                 ACCESS_MODE="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --domain)
                 DOMAIN="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --cliproxy-domain)
                 CLI_CLIPROXY_DOMAIN="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --newapi-domain|--new-api-domain)
                 CLI_NEWAPI_DOMAIN="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --cliproxy-mode)
                 CLIPROXY_DEPLOY_MODE="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --cliproxy-image)
                 CLIPROXY_IMAGE="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --db-type)
                 DB_TYPE="${2:-}"
                 DB_TYPE_EXPLICIT=true
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --newapi-image)
                 NEWAPI_IMAGE="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --newapi-action)
                 NEWAPI_ACTION="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --git-name)
                 GIT_NAME="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --git-email)
                 GIT_EMAIL="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --git-machine-role)
                 GIT_MACHINE_ROLE="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --git-scope)
                 GIT_SCOPE="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --git-repo-dir)
                 GIT_REPO_DIR="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --git-target-user)
                 GIT_TARGET_USER="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --gh-auth-mode)
                 GH_AUTH_MODE="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --admin-password)
                 ADMIN_PASSWORD="${2:-}"
-                shift 2
+                shift 2 || missing_option_value "$1"
                 ;;
             --allow-managed-drift)
                 ALLOW_MANAGED_DRIFT=true
@@ -1879,6 +1902,10 @@ parse_cli_args() {
     fi
     DB_TYPE="${DB_TYPE:-${HAO_DB_TYPE:-postgresql}}"
     NEWAPI_ACTION="${NEWAPI_ACTION:-${HAO_NEWAPI_ACTION:-ensure}}"
+    # 记录镜像是否为用户显式指定（CLI 或 profile）；升级时组件据此决定是否沿用现有镜像
+    if [ -n "$CLIPROXY_IMAGE" ] || [ -n "${HAO_CLIPROXY_IMAGE:-}" ]; then
+        CLIPROXY_IMAGE_EXPLICIT=true
+    fi
     CLIPROXY_IMAGE="${CLIPROXY_IMAGE:-${HAO_CLIPROXY_IMAGE:-eceasy/cli-proxy-api:latest}}"
     NEWAPI_IMAGE="${NEWAPI_IMAGE:-${HAO_NEWAPI_IMAGE:-calciumion/new-api:latest}}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-${HAO_ADMIN_PASSWORD:-}}"
@@ -2526,9 +2553,12 @@ run_cli_command() {
             prepare_cli_plan "$command" "$@"
             print_cli_status "all"
             echo ""
-            run_preflight_checks
+            # doctor 是排障命令：preflight 失败也要继续输出漂移报告，最后统一以非零退出
+            doctor_rc=0
+            run_preflight_checks || doctor_rc=$?
             echo ""
-            hao_print_drift_report
+            hao_print_drift_report || doctor_rc=$?
+            exit "$doctor_rc"
             ;;
         inventory)
             parse_cli_args "$command" "$@"

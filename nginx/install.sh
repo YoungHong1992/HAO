@@ -67,6 +67,8 @@ setup_logging() {
     local script_name="${1:-deploy}"
     mkdir -p "$DEPLOY_LOG_DIR"
     DEPLOY_LOG_FILE="${DEPLOY_LOG_DIR}/${script_name}-$(date +%Y%m%d-%H%M%S).log"
+    # 日志可能包含敏感上下文，先以 600 权限建档再追加写入
+    install -m 600 /dev/null "$DEPLOY_LOG_FILE"
     exec > >(tee -a "$DEPLOY_LOG_FILE") 2>&1
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] === 日志开始: $DEPLOY_LOG_FILE ==="
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] 脚本: $script_name"

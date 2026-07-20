@@ -54,12 +54,12 @@ chmod 700 ~/.claude
 cat > ~/.claude/settings.json <<'EOF'
 {
   "env": {
-    "ANTHROPIC_BASE_URL": "https://www.521xxz.com",
+    "ANTHROPIC_BASE_URL": "https://gateway.example.com",
     "ANTHROPIC_AUTH_TOKEN": "替换为你的 token",
-    "ANTHROPIC_MODEL": "claude-fable-5-thinking",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-fable-5-thinking",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-fable-5-thinking",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-fable-5-thinking",
+    "ANTHROPIC_MODEL": "替换为网关提供的模型名",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "替换为网关提供的模型名",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "替换为网关提供的模型名",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "替换为网关提供的模型名",
     "API_TIMEOUT_MS": "3000000",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "CLAUDE_CODE_DISABLE_1M_CONTEXT": "0",
@@ -110,7 +110,7 @@ sudo npm install -g @anthropic-ai/claude-code
 确认 npm 全局 bin 目录在 `PATH` 中：
 
 ```bash
-npm bin -g
+npm prefix -g
 echo "$PATH"
 ```
 
