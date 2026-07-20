@@ -45,6 +45,8 @@ setup_logging() {
     local script_name="${1:-deploy}"
     mkdir -p "$DEPLOY_LOG_DIR"
     DEPLOY_LOG_FILE="${DEPLOY_LOG_DIR}/${script_name}-$(date +%Y%m%d-%H%M%S).log"
+    # 日志可能包含敏感上下文，先以 600 权限建档再追加写入
+    install -m 600 /dev/null "$DEPLOY_LOG_FILE"
     exec > >(tee -a "$DEPLOY_LOG_FILE") 2>&1
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] === 日志开始: $DEPLOY_LOG_FILE ==="
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] 脚本: $script_name"
@@ -66,10 +68,9 @@ check_root() {
 }
 
 detect_os() {
-    if [ -f /etc/os-release ]; then
-        # shellcheck source=/dev/null
-        . /etc/os-release
-        echo "$ID"
+    local os_release_file="${HAO_OS_RELEASE_FILE:-/etc/os-release}"
+    if [ -f "$os_release_file" ]; then
+        awk -F= '$1 == "ID" { gsub(/"/, "", $2); print $2; exit }' "$os_release_file"
     elif [ -f /etc/redhat-release ]; then
         echo "rhel"
     else
@@ -78,13 +79,33 @@ detect_os() {
 }
 
 detect_os_version() {
-    if [ -f /etc/os-release ]; then
-        # shellcheck source=/dev/null
-        . /etc/os-release
-        echo "${VERSION_CODENAME:-unknown}"
+    local os_release_file="${HAO_OS_RELEASE_FILE:-/etc/os-release}"
+    if [ -f "$os_release_file" ]; then
+        awk -F= '$1 == "VERSION_CODENAME" { gsub(/"/, "", $2); print $2; exit }' "$os_release_file"
     else
         echo "unknown"
     fi
+}
+
+detect_os_version_id() {
+    local os_release_file="${HAO_OS_RELEASE_FILE:-/etc/os-release}"
+    if [ -f "$os_release_file" ]; then
+        awk -F= '$1 == "VERSION_ID" { gsub(/"/, "", $2); print $2; exit }' "$os_release_file"
+    else
+        echo "unknown"
+    fi
+}
+
+is_supported_os_release() {
+    local os="$1" version="$2"
+    case "$os:$version" in
+        debian:12|debian:13|ubuntu:22.04|ubuntu:24.04|ubuntu:26.04) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+supported_os_summary() {
+    echo "Debian 13/12; Ubuntu 26.04/24.04/22.04 LTS"
 }
 
 detect_server_ip() {

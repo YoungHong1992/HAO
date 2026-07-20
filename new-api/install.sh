@@ -325,6 +325,9 @@ if [ "$NEWAPI_ACTION" = "upgrade" ]; then
     backup_file "$EXISTING_COMPOSE"
 fi
 
+# compose 内嵌数据库/Redis 密码与 SESSION_SECRET，落盘前先以 600 权限建档，避免出现可读窗口
+install -m 600 /dev/null "$SERVICE_DIR/docker-compose.yml"
+
 if [ "$USE_POSTGRESQL" = true ]; then
     cat > "$SERVICE_DIR/docker-compose.yml" <<COMPOSE_EOF
 # Managed by HAO

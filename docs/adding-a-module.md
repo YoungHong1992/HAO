@@ -52,7 +52,7 @@
 | `service_short_name()` | 展示短名 |
 | `normalize_service_id()` | ID 与别名解析 |
 | `run_install()` 的 case | 传递模块专属 `HAO_*` 环境变量 |
-| `record_service_management_state()` | 登记 managed/shared/observed/secret 资源，不能记录秘密值 |
+| `collect_service_resource_candidates()` 的 case | 登记 managed/shared/observed/secret 资源，不能记录秘密值 |
 | `print_summary()` 的 case | 安装后常用命令提示 |
 | `print_cli_status()` 的 case | status 一行详情 |
 | `print_cli_plan()` 的 case（可选） | plan 输出模块专属配置（secret 显示 `provided (hidden)`） |
