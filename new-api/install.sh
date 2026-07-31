@@ -365,7 +365,7 @@ services:
     networks:
       - $DOCKER_NETWORK
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/status || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/status >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -452,7 +452,7 @@ services:
     networks:
       - $DOCKER_NETWORK
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/status || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/status >/dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
