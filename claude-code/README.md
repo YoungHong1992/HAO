@@ -17,6 +17,9 @@ HAO_SERVICES="claude-code"
 HAO_CC_BASE_URL="https://gateway.example.com"
 HAO_CC_TOKEN_FILE="/root/.secrets/cc-token"
 HAO_CC_MODEL="claude-fable-5-thinking"
+HAO_CC_DISABLE_NONESSENTIAL_TRAFFIC="1"
+HAO_CC_EXTRA_ENV="CLAUDE_CODE_ATTRIBUTION_HEADER=0
+DISABLE_TELEMETRY=1"
 EOF
 sudo ./hao apply --profile deploy.env --yes
 
@@ -36,8 +39,12 @@ cd claude-code && sudo ./install.sh
 | `HAO_CC_TOKEN_FILE` | 从文件首行读取 token（优先于 `HAO_CC_AUTH_TOKEN`，避免 token 进入 profile/命令行） | 无 |
 | `HAO_CC_MODEL` | 默认模型（同时设置 SONNET/OPUS/HAIKU 默认） | 无 |
 | `HAO_CC_API_TIMEOUT_MS` | API 超时毫秒数 | `3000000` |
+| `HAO_CC_DISABLE_NONESSENTIAL_TRAFFIC` | 设为 `1` 关闭发往官方的自更新/遥测/错误上报等非必要流量（自建网关场景推荐） | 关闭 |
+| `HAO_CC_EXTRA_ENV` | 追加任意 `settings.json` 的 `env` 键，格式 `KEY=VALUE`，多项用换行或逗号分隔（键名须大写） | 无 |
 | `HAO_CC_USER` | settings.json 写入的目标用户 | `SUDO_USER`，否则当前用户 |
 | `HAO_CC_CONFIGURE_ONLY` | 设为 `1` 时只写配置，跳过 Node.js/CLI 安装（为当前用户写配置时无需 root） | 关闭 |
+
+> **注意 `KEY=0` 的陷阱**：`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`、`DISABLE_TELEMETRY`、`DISABLE_ERROR_REPORTING` 这类变量「只看是否被设置」——写成 `KEY=0` 反而会**启用**该行为。要关闭就不要写这一项。通过 `HAO_CC_EXTRA_ENV` 传入此类 `=0` 时脚本会给出告警。便捷开关 `HAO_CC_DISABLE_NONESSENTIAL_TRAFFIC` 已内部规避该坑（仅在为真时写 `1`）。托管键（`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`/模型）始终覆盖 `HAO_CC_EXTRA_ENV` 中的同名项。
 
 ## 安全说明
 

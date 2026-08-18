@@ -77,7 +77,7 @@ DOCKER_ROOT="${HAO_DOCKER_ROOT:-/opt/docker-services}"
 SERVICE_DIR="$DOCKER_ROOT/new-api"
 DATA_DIR="$SERVICE_DIR/data"
 LOGS_DIR="$SERVICE_DIR/logs"
-DOCKER_IMAGE="${HAO_NEWAPI_IMAGE:-calciumion/new-api:latest}"
+DOCKER_IMAGE="${HAO_NEWAPI_IMAGE:-calciumion/new-api:v1.0.0-rc.21}"
 DOCKER_NETWORK="${HAO_DOCKER_NETWORK:-ai-services}"
 NEWAPI_ACTION="${HAO_NEWAPI_ACTION:-ensure}"
 EXISTING_COMPOSE="$SERVICE_DIR/docker-compose.yml"
@@ -328,12 +328,18 @@ fi
 # compose 内嵌数据库/Redis 密码与 SESSION_SECRET，落盘前先以 600 权限建档，避免出现可读窗口
 install -m 600 /dev/null "$SERVICE_DIR/docker-compose.yml"
 
+# Redis 密码经 0600 配置文件传入容器（挂载只读），避免出现在 redis 进程 cmdline / docker inspect 命令行中
+install -m 600 /dev/null "$SERVICE_DIR/redis.conf"
+cat > "$SERVICE_DIR/redis.conf" <<REDIS_CONF_EOF
+requirepass $REDIS_PASSWORD
+appendonly yes
+REDIS_CONF_EOF
+
 if [ "$USE_POSTGRESQL" = true ]; then
     cat > "$SERVICE_DIR/docker-compose.yml" <<COMPOSE_EOF
 # Managed by HAO
 # Service: new-api
 # Release: ${COMMON_VERSION}
-version: '3.8'
 
 services:
   new-api:
@@ -393,13 +399,17 @@ services:
     image: redis:7-alpine
     container_name: newapi-redis
     restart: always
-    command: redis-server --requirepass $REDIS_PASSWORD --appendonly yes
+    # 密码经挂载的 0600 redis.conf 传入，不出现在容器进程 cmdline / docker inspect 命令行中
+    command: redis-server /usr/local/etc/redis/redis.conf
+    environment:
+      - REDISCLI_AUTH=$REDIS_PASSWORD
     volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
       - redis_data:/data
     networks:
       - $DOCKER_NETWORK
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "$REDIS_PASSWORD", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -420,7 +430,6 @@ else
 # Managed by HAO
 # Service: new-api
 # Release: ${COMMON_VERSION}
-version: '3.8'
 
 services:
   new-api:
@@ -482,13 +491,17 @@ services:
     image: redis:7-alpine
     container_name: newapi-redis
     restart: always
-    command: redis-server --requirepass $REDIS_PASSWORD --appendonly yes
+    # 密码经挂载的 0600 redis.conf 传入，不出现在容器进程 cmdline / docker inspect 命令行中
+    command: redis-server /usr/local/etc/redis/redis.conf
+    environment:
+      - REDISCLI_AUTH=$REDIS_PASSWORD
     volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
       - redis_data:/data
     networks:
       - $DOCKER_NETWORK
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "$REDIS_PASSWORD", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5

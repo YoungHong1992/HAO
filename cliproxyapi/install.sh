@@ -77,20 +77,22 @@ done
 
 # ==================== 全局配置 ====================
 CLIPROXY_PORT=8317
-CONF_D="/etc/nginx/conf.d"
-SSL_DIR="/etc/nginx/ssl"
+# 路径可经 HAO_* 覆盖（与 new-api 及根 install.sh 的状态/所有权跟踪保持一致，
+# 避免用户覆盖 HAO_DOCKER_ROOT/HAO_NGINX_* 时出现落盘路径与状态记录分叉）。
+CONF_D="${HAO_NGINX_CONF_DIR:-/etc/nginx/conf.d}"
+SSL_DIR="${HAO_NGINX_SSL_DIR:-/etc/nginx/ssl}"
 INSTALL_DIR="/opt/cliproxyapi"
 CONFIG_DIR="/etc/cliproxyapi"
 DATA_DIR="/var/lib/cliproxyapi"
 LOG_DIR="/var/log/cliproxyapi"
 GITHUB_REPO="router-for-me/CLIProxyAPI"
 GITHUB_API="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-DOCKER_ROOT="/opt/docker-services"
+DOCKER_ROOT="${HAO_DOCKER_ROOT:-/opt/docker-services}"
 DOCKER_SERVICE_DIR="$DOCKER_ROOT/cliproxyapi"
 DOCKER_CONFIG_FILE="$DOCKER_SERVICE_DIR/config.yaml"
 DOCKER_AUTH_DIR="$DOCKER_SERVICE_DIR/auths"
 DOCKER_LOG_DIR="$DOCKER_SERVICE_DIR/logs"
-DOCKER_IMAGE="${HAO_CLIPROXY_IMAGE:-eceasy/cli-proxy-api:latest}"
+DOCKER_IMAGE="${HAO_CLIPROXY_IMAGE:-eceasy/cli-proxy-api:v7.2.71}"
 DOCKER_CONTAINER_NAME="cliproxyapi"
 
 normalize_deploy_mode() {
@@ -303,12 +305,15 @@ COMPOSE_EOF
 
     echo "$DOCKER_IMAGE" > "$DOCKER_SERVICE_DIR/version.txt"
 
-    sleep 5
-    if $COMPOSE_CMD ps 2>/dev/null | grep -q "Up"; then
-        log_success "容器运行正常"
+    # 真实就绪探测：从宿主机轮询本地绑定端口的 TCP 可连接性，
+    # 而非仅凭容器 "Up"（容器起来后应用仍可能崩溃或未绑定端口）。
+    if wait_for_local_port "$CLIPROXY_PORT" 60 2; then
+        log_success "服务已就绪 (127.0.0.1:$CLIPROXY_PORT)"
     else
-        log_warning "容器可能未正常启动，请检查日志"
+        log_error "服务在 60s 内未就绪 (127.0.0.1:$CLIPROXY_PORT)，请检查日志"
         $COMPOSE_CMD ps 2>/dev/null || true
+        $COMPOSE_CMD logs --tail 50 2>/dev/null || true
+        exit 1
     fi
 
     if [ "$IS_UPGRADE" = false ] && [ -n "$DOMAIN" ]; then

@@ -1,7 +1,7 @@
 # Docker 自动安装指南
 
-> **版本**: v1.0
-> **更新日期**: 2026-06-23
+> **模块**: HAO Docker 基础环境组件
+> **版本模型**: 随 HAO 仓库统一发布（不可变标识 `YYMMDD-<git-hash>`，见 `docs/releasing.md`）
 > **适用场景**: VPS 集群 Docker 服务基础环境
 
 ---

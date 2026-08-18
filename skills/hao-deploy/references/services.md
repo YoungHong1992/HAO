@@ -38,6 +38,10 @@ Already installed dependencies are detected and skipped unless selected directly
 - `HAO_ADMIN_PASSWORD` (CLI: `--admin-password`): CliproxyAPI management panel
   password; auto-generated when omitted. Prefer omitting it so the generated value
   only lands in the credentials file — never echo or log the value either way.
+  **Avoid the `--admin-password` flag: a command-line value is visible to any local
+  user via `ps`/`/proc/<pid>/cmdline`.** Set `HAO_ADMIN_PASSWORD` in the profile, or
+  pass `--admin-password-file <PATH>` (reads the secret from the file's first line),
+  or omit it entirely to use the auto-generated value.
 - `HAO_DB_TYPE`: `postgresql` or `mysql`
 - `HAO_NEWAPI_IMAGE`: New-API Docker image tag or digest
 - `HAO_NEWAPI_ACTION`: `ensure` (default), `upgrade`, or `migrate-db`. An existing
@@ -57,6 +61,8 @@ Already installed dependencies are detected and skipped unless selected directly
 - `HAO_CC_BASE_URL`: Claude Code Anthropic-compatible gateway URL
 - `HAO_CC_TOKEN_FILE`: file containing the Claude Code API token (preferred over `HAO_CC_AUTH_TOKEN`; keeps the secret out of the profile)
 - `HAO_CC_MODEL`: Claude Code default model (also sets Sonnet/Opus/Haiku defaults)
+- `HAO_CC_DISABLE_NONESSENTIAL_TRAFFIC`: set to `1` to turn off Claude Code's nonessential traffic to Anthropic (auto-update/telemetry/error reporting) — recommended for self-hosted gateway deployments
+- `HAO_CC_EXTRA_ENV`: extra `settings.json` `env` keys as `KEY=VALUE`, newline- or comma-separated (keys must be uppercase). Managed keys (base URL / token / model) always override same-named entries here. Note some Claude Code toggles (`DISABLE_TELEMETRY`, `DISABLE_ERROR_REPORTING`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`) treat any set value including `0` as "on" — to disable, omit the key rather than setting it to `0`
 - `HAO_CC_USER`: user whose `~/.claude/settings.json` is written (default: invoking user)
 - `HAO_CC_CONFIGURE_ONLY`: set to `1` to write configuration without installing Node.js/CLI
 - `HAO_CC_ACTION`: `ensure` (default, keep an existing Claude Code CLI version) or `upgrade`

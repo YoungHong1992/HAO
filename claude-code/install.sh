@@ -23,6 +23,8 @@
 #   HAO_CC_TOKEN_FILE     从文件读取 token，避免 token 出现在命令行/profile
 #   HAO_CC_MODEL          默认模型（同时写入 SONNET/OPUS/HAIKU 默认值）
 #   HAO_CC_API_TIMEOUT_MS API 超时，默认 3000000
+#   HAO_CC_DISABLE_NONESSENTIAL_TRAFFIC=1  关闭发往官方的自更新/遥测/错误上报等非必要流量
+#   HAO_CC_EXTRA_ENV      追加任意 settings.json env 键（KEY=VALUE，换行或逗号分隔）
 #   HAO_CC_USER           settings.json 目标用户，默认 SUDO_USER 或当前用户
 #   HAO_CC_CONFIGURE_ONLY 设为 1 时只写配置，跳过 Node.js/CLI 安装（无需 root）
 #
@@ -100,6 +102,8 @@ CC_AUTH_TOKEN="${HAO_CC_AUTH_TOKEN:-}"
 CC_TOKEN_FILE="${HAO_CC_TOKEN_FILE:-}"
 CC_MODEL="${HAO_CC_MODEL:-}"
 CC_API_TIMEOUT_MS="${HAO_CC_API_TIMEOUT_MS:-3000000}"
+CC_DISABLE_NONESSENTIAL="${HAO_CC_DISABLE_NONESSENTIAL_TRAFFIC:-}"
+CC_EXTRA_ENV="${HAO_CC_EXTRA_ENV:-}"
 CC_TARGET_USER="${HAO_CC_USER:-${SUDO_USER:-$(id -un)}}"
 
 if [ -n "$CC_TOKEN_FILE" ]; then
@@ -111,16 +115,9 @@ if [ -n "$CC_TOKEN_FILE" ]; then
 fi
 
 WRITE_SETTINGS=false
-if [ -n "$CC_BASE_URL" ] || [ -n "$CC_AUTH_TOKEN" ] || [ -n "$CC_MODEL" ]; then
+if [ -n "$CC_BASE_URL" ] || [ -n "$CC_AUTH_TOKEN" ] || [ -n "$CC_MODEL" ] || [ -n "$CC_EXTRA_ENV" ] || [ -n "$CC_DISABLE_NONESSENTIAL" ]; then
     WRITE_SETTINGS=true
 fi
-
-json_escape() {
-    local value="$1"
-    value=${value//\\/\\\\}
-    value=${value//\"/\\\"}
-    printf '%s' "$value"
-}
 
 # ==================== 安装流程 ====================
 if [ "$CONFIGURE_ONLY" = false ]; then
@@ -214,44 +211,73 @@ if [ "$WRITE_SETTINGS" = true ]; then
 
     backup_file "$SETTINGS_FILE"
 
-    # 只写入用户提供的键；token 不经过 stdout/日志。
-    {
-        echo '{'
-        echo '  "env": {'
-        first=true
-        emit_kv() {
-            local key="$1" value="$2"
-            [ "$first" = true ] || echo ','
-            first=false
-            printf '    "%s": "%s"' "$key" "$(json_escape "$value")"
+    # 深合并写入：读取已有 settings.json，仅把本次提供的键并入 .env，
+    # 保留用户已有的 permissions/hooks/MCP 及其它 env 键（避免整体覆写导致配置丢失）。
+    # 敏感值经环境变量传给合并器（绝不进 argv/日志），结果经 write_credentials_file 原子 0600 写入。
+    if ! command -v node &>/dev/null; then
+        log_error "写入 settings.json 需要 node 进行安全合并，但未检测到 node。请先安装 Node.js 或设置 HAO_CC_ACTION=install。"
+        exit 1
+    fi
+
+    CC_BASE_URL="$CC_BASE_URL" \
+    CC_AUTH_TOKEN="$CC_AUTH_TOKEN" \
+    CC_MODEL="$CC_MODEL" \
+    CC_API_TIMEOUT_MS="$CC_API_TIMEOUT_MS" \
+    CC_DISABLE_NONESSENTIAL="$CC_DISABLE_NONESSENTIAL" \
+    CC_EXTRA_ENV="$CC_EXTRA_ENV" \
+    SETTINGS_FILE="$SETTINGS_FILE" \
+    node -e '
+      const fs = require("fs");
+      const f = process.env.SETTINGS_FILE;
+      let s = {};
+      if (fs.existsSync(f)) {
+        try {
+          s = JSON.parse(fs.readFileSync(f, "utf8") || "{}");
+        } catch (e) {
+          process.stderr.write("existing settings.json is not valid JSON; refusing to overwrite (a backup was already created)\n");
+          process.exit(1);
         }
-        [ -n "$CC_BASE_URL" ]   && emit_kv "ANTHROPIC_BASE_URL" "$CC_BASE_URL"
-        [ -n "$CC_AUTH_TOKEN" ] && emit_kv "ANTHROPIC_AUTH_TOKEN" "$CC_AUTH_TOKEN"
-        if [ -n "$CC_MODEL" ]; then
-            emit_kv "ANTHROPIC_MODEL" "$CC_MODEL"
-            emit_kv "ANTHROPIC_DEFAULT_SONNET_MODEL" "$CC_MODEL"
-            emit_kv "ANTHROPIC_DEFAULT_OPUS_MODEL" "$CC_MODEL"
-            emit_kv "ANTHROPIC_DEFAULT_HAIKU_MODEL" "$CC_MODEL"
-        fi
-        emit_kv "API_TIMEOUT_MS" "$CC_API_TIMEOUT_MS"
-        echo ''
-        echo '  }'
-        echo '}'
-    } | write_credentials_file "$SETTINGS_FILE"
+      }
+      if (typeof s !== "object" || s === null || Array.isArray(s)) s = {};
+      if (typeof s.env !== "object" || s.env === null || Array.isArray(s.env)) s.env = {};
+      // 通用透传：HAO_CC_EXTRA_ENV 的 KEY=VALUE 逐条并入 .env（换行或逗号分隔）。
+      // 先于下面的托管键写入，确保 BASE_URL/TOKEN/MODEL 始终覆盖透传值、不被误伤。
+      const setOrUnset = new Set(["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_TELEMETRY", "DISABLE_ERROR_REPORTING"]);
+      for (const pair of (process.env.CC_EXTRA_ENV || "").split(/[\n,]+/)) {
+        const t = pair.trim();
+        if (!t) continue;
+        const i = t.indexOf("=");
+        const k = i > 0 ? t.slice(0, i).trim() : "";
+        if (!/^[A-Z_][A-Z0-9_]*$/.test(k)) { process.stderr.write("skip invalid HAO_CC_EXTRA_ENV entry (expected KEY=VALUE, KEY uppercase): " + t + "\n"); continue; }
+        const v = t.slice(i + 1).trim();
+        if (setOrUnset.has(k) && v === "0") process.stderr.write("warning: " + k + "=0 still ENABLES it (this var only checks whether it is set); remove the entry to disable\n");
+        s.env[k] = v;
+      }
+      // 便捷开关：仅在为真时写 "1"，规避“写 0 反而打开”的坑。
+      { const d = process.env.CC_DISABLE_NONESSENTIAL; if (d && d !== "0" && d.toLowerCase() !== "false") s.env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"; }
+      const set = (k, v) => { if (v !== undefined && v !== "") s.env[k] = v; };
+      set("ANTHROPIC_BASE_URL", process.env.CC_BASE_URL);
+      set("ANTHROPIC_AUTH_TOKEN", process.env.CC_AUTH_TOKEN);
+      if (process.env.CC_MODEL) {
+        const m = process.env.CC_MODEL;
+        set("ANTHROPIC_MODEL", m);
+        set("ANTHROPIC_DEFAULT_SONNET_MODEL", m);
+        set("ANTHROPIC_DEFAULT_OPUS_MODEL", m);
+        set("ANTHROPIC_DEFAULT_HAIKU_MODEL", m);
+      }
+      set("API_TIMEOUT_MS", process.env.CC_API_TIMEOUT_MS);
+      process.stdout.write(JSON.stringify(s, null, 2) + "\n");
+    ' | write_credentials_file "$SETTINGS_FILE"
 
     if [ "$EUID" -eq 0 ]; then
         chown -R "$CC_TARGET_USER":"$(id -gn "$CC_TARGET_USER")" "$SETTINGS_DIR"
     fi
 
-    if command -v node &>/dev/null; then
-        if SETTINGS_FILE="$SETTINGS_FILE" node -e "JSON.parse(require('fs').readFileSync(process.env.SETTINGS_FILE,'utf8'))" 2>/dev/null; then
-            log_success "settings.json 校验通过: $SETTINGS_FILE"
-        else
-            log_error "settings.json JSON 校验失败: $SETTINGS_FILE"
-            exit 1
-        fi
+    if SETTINGS_FILE="$SETTINGS_FILE" node -e "JSON.parse(require('fs').readFileSync(process.env.SETTINGS_FILE,'utf8'))" 2>/dev/null; then
+        log_success "settings.json 校验通过: $SETTINGS_FILE"
     else
-        log_warning "未检测到 node，跳过 JSON 校验: $SETTINGS_FILE"
+        log_error "settings.json JSON 校验失败: $SETTINGS_FILE"
+        exit 1
     fi
 else
     log_step "Step 3/3: 跳过配置（未提供 HAO_CC_* 变量）"

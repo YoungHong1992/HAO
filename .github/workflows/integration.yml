@@ -6,12 +6,14 @@ on:
     paths:
       - 'maintenance/**'
       - 'new-api/**'
+      - 'cliproxyapi/**'
       - 'uv/**'
       - 'lib/**'
       - 'install.sh'
       - 'tests/test-maintenance-idempotency.sh'
       - 'tests/test-apply-safety.sh'
       - 'tests/test-newapi-idempotency.sh'
+      - 'tests/test-cliproxyapi-idempotency.sh'
       - 'tests/test-uv-idempotency.sh'
       - '.github/workflows/integration.yml'
 
@@ -46,6 +48,17 @@ jobs:
 
       - name: Run two apply operations and an explicit upgrade
         run: sudo ./tests/test-newapi-idempotency.sh "${{ matrix.database }}"
+
+  cliproxyapi-idempotency:
+    name: CliproxyAPI idempotency and secret reuse
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run docker two-apply and bare secret-reuse checks
+        run: sudo ./tests/test-cliproxyapi-idempotency.sh
 
   ownership-safety:
     name: Apply ownership safety gates

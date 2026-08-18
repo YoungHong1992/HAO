@@ -668,11 +668,9 @@ echo ""
 log_step "[1/6] 下载安装 Xray-core..."
 
 if ! command -v xray &>/dev/null; then
-    XRAY_VERSION=$(curl -sL --connect-timeout 10 \
-        -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/repos/XTLS/Xray-core/releases/latest" 2>/dev/null \
-        | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1) || true
-    [ -z "$XRAY_VERSION" ] && XRAY_VERSION="v26.3.27"
+    # 固定到已知良好版本以保证可复现；如需其它版本可设 HAO_XRAY_VERSION=vX.Y.Z。
+    # 不再依赖 GitHub "latest" API（其结果随时间漂移，且限流/网络故障会退化为陈旧 fallback）。
+    XRAY_VERSION="${HAO_XRAY_VERSION:-v26.3.27}"
     log_info "版本: $XRAY_VERSION"
 
     XRAY_ARCH=$(detect_arch)

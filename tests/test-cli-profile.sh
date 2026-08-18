@@ -87,7 +87,7 @@ if HAO_DOCKER_ROOT="$EXISTING_ROOT" "$ROOT_DIR/hao" plan --services new-api --ne
   echo "Cross-engine New-API upgrade unexpectedly passed planning" >&2
   exit 1
 fi
-if ! grep -q 'calciumion/new-api:v1.0.0-rc.21 (release-candidate)' <<<"$plan_output"; then
+if ! grep -q 'calciumion/new-api:v1.0.0-rc.21 (reviewed default, release-candidate)' <<<"$plan_output"; then
   echo "Plan did not include reviewed New-API image candidates" >&2
   exit 1
 fi

@@ -9,17 +9,41 @@ YYMMDD-<7-character-git-hash>
 The date is UTC. A release identifier names one Git commit and must never be reused
 or overwritten.
 
+## Maturity milestones (e.g. "1.0 GA")
+
+Maturity milestones such as "1.0 (GA)" are **documentation labels that point at one
+immutable release ID** — they never replace or reformat the `YYMMDD-<hash>` identity.
+`./hao --version`, the `Release` workflow, and the release archive always report the
+immutable ID only.
+
+To mark a milestone:
+
+- Record it in `CHANGELOG.md` against the concrete build it refers to
+  (`## 1.0 (GA) — build <YYMMDD-hash>`).
+- Optionally add an **annotated git tag** `milestone-1.0` on that commit for
+  discoverability. This tag is a pointer only; it is **not** a GitHub Release and does
+  not trigger the `Release` workflow (which is `workflow_dispatch` and always mints a
+  fresh immutable ID).
+
+There is no semantic-version scheme for the toolkit itself. Per-component README files
+that once carried a component `版本:` line now defer to this release model.
+
 ## Release gates
 
 Before triggering the GitHub `Release` workflow:
 
 1. Update `config/image-candidates.tsv` from the upstream registries on the UTC release
-   date. Keep `latest` as the default and record two fixed-tag alternatives with honest
-   maturity labels. The release workflow rejects stale dates and missing registry tags.
+   date. The `default` column must hold a **reviewed, fixed tag** (never `latest`); record
+   `latest` and one more fixed tag as alternatives with honest maturity labels. Installers
+   ship these pinned defaults so a build is reproducible; `latest` remains a documented,
+   opt-in alternative. The release workflow rejects stale dates and missing registry tags.
 2. Run `./tests/run.sh` locally and confirm the `CI` workflow passed on the target commit.
-3. Complete real-VM acceptance on every Ubuntu release in the acceptance matrix below.
-4. Store the acceptance output in an issue, workflow artifact, or other durable URL.
-5. Trigger `Release`, selecting a commit on `main` and supplying that evidence URL.
+3. Confirm the `Integration` workflow passed on the target commit (or on the same PR). The
+   integration gate runs on `ubuntu-latest` — a real Ubuntu VM with systemd, Docker, and
+   UFW — and exercises `apply --yes` twice for each service to verify idempotency. Passing
+   CI is the acceptance gate.
+4. Trigger `Release`, selecting a commit on `main` and supplying the URL of the passing
+   CI or Integration workflow run as the `acceptance_evidence` input.
 
 The workflow repeats the complete test suite, verifies that the commit belongs to
 `main`, creates the release identifier, bundles the repository, verifies embedded

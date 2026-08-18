@@ -800,7 +800,7 @@ LIMITS_EOF
 
 # ==================== 步骤 2: 安装 Nginx ====================
 
-log_step "[2/3] 安装 Nginx (nginx.org 官方主线包)..."
+log_step "[2/3] 安装 Nginx (nginx.org 官方包)..."
 
 # 检测系统并添加 nginx.org 官方仓库
 if [ -f /etc/debian_version ]; then
@@ -812,13 +812,21 @@ if [ -f /etc/debian_version ]; then
     curl -fsSL --connect-timeout 30 https://nginx.org/keys/nginx_signing.key \
         | gpg --dearmor --yes -o /usr/share/keyrings/nginx-archive-keyring.gpg
 
-    # 添加 mainline 仓库（支持 HTTP/3）
+    # 选择 nginx.org 仓库分支：默认 stable（生产更稳定，nginx 1.26+ 同样支持 HTTP/3）。
+    # 如确需主线特性可设 HAO_NGINX_REPO_BRANCH=mainline。
+    NGINX_REPO_BRANCH="${HAO_NGINX_REPO_BRANCH:-stable}"
+    case "$NGINX_REPO_BRANCH" in
+        mainline)        NGINX_REPO_PATH="mainline/" ;;
+        stable|packages) NGINX_REPO_PATH="" ;;
+        *) log_warning "未知 HAO_NGINX_REPO_BRANCH='$NGINX_REPO_BRANCH'，回退到 stable"; NGINX_REPO_PATH="" ;;
+    esac
+
     . /etc/os-release
     if [ "$ID" = "debian" ] && [ -z "${VERSION_CODENAME:-}" ]; then
         VERSION_CODENAME=$(lsb_release -cs 2>/dev/null || echo "bookworm")
     fi
     echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] \
-	http://nginx.org/packages/mainline/${ID}/ ${VERSION_CODENAME} nginx" \
+	http://nginx.org/packages/${NGINX_REPO_PATH}${ID}/ ${VERSION_CODENAME} nginx" \
         | { printf '# Managed by HAO\n# Service: nginx\n'; cat; } \
         > /etc/apt/sources.list.d/nginx.list
 

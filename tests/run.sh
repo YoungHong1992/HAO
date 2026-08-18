@@ -11,9 +11,17 @@ if command -v shellcheck >/dev/null 2>&1; then
   printf '== shellcheck ==\n'
   find "$ROOT_DIR" -path "$ROOT_DIR/.git" -prune -o -name '*.sh' -print0 \
     | xargs -0 shellcheck -x -S warning
+elif [ "${HAO_ALLOW_MISSING_SHELLCHECK:-}" = "1" ]; then
+  printf '== shellcheck skipped: not installed (HAO_ALLOW_MISSING_SHELLCHECK=1) ==\n' >&2
 else
-  printf '== shellcheck skipped: not installed ==\n'
+  printf 'ERROR: shellcheck 未安装，静态检查无法运行。\n' >&2
+  printf '  安装: apt-get install -y shellcheck\n' >&2
+  printf '  仅在确知无法安装时用 HAO_ALLOW_MISSING_SHELLCHECK=1 显式跳过。\n' >&2
+  exit 1
 fi
+
+printf '== helper sync (install.sh <-> lib) ==\n'
+"$ROOT_DIR/tests/test-helper-sync.sh"
 
 printf '== common and crypto helpers ==\n'
 "$ROOT_DIR/tests/test-common-crypto.sh"
