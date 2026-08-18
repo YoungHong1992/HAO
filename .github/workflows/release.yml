@@ -9,7 +9,7 @@ on:
         default: main
         type: string
       acceptance_evidence:
-        description: URL or identifier for the completed real-VM acceptance record
+        description: "URL of the passing CI/Integration run for this ref (the ubuntu-latest apply/idempotency evidence). See docs/releasing.md."
         required: true
         type: string
 
@@ -17,9 +17,38 @@ permissions:
   contents: write
 
 jobs:
+  integration-gate:
+    name: Root apply safety and idempotency gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Apply ownership safety gates
+        run: sudo ./tests/test-apply-safety.sh
+
+      - name: New-API PostgreSQL two-apply idempotency
+        run: sudo ./tests/test-newapi-idempotency.sh postgresql
+
+      - name: New-API MySQL two-apply idempotency
+        run: sudo ./tests/test-newapi-idempotency.sh mysql
+
+      - name: CliproxyAPI idempotency and secret reuse
+        run: sudo ./tests/test-cliproxyapi-idempotency.sh
+
+      - name: uv real install idempotency
+        run: sudo ./tests/test-uv-idempotency.sh
+
+      - name: Maintenance real install idempotency
+        run: sudo ./tests/test-maintenance-idempotency.sh
+
   release:
     name: Build date-hash release
     runs-on: ubuntu-latest
+    needs: integration-gate
 
     steps:
       - uses: actions/checkout@v4

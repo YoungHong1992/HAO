@@ -10,7 +10,7 @@
 
 services:
   cliproxyapi:
-    image: eceasy/cli-proxy-api:latest
+    image: eceasy/cli-proxy-api:v7.2.71
     container_name: cliproxyapi
     restart: unless-stopped
     ports:

@@ -1,6 +1,6 @@
 # CliproxyAPI 轻量 AI API 代理
 
-> **版本**: v2.1
+> **版本模型**: 随 HAO 仓库统一发布（不可变标识 `YYMMDD-<git-hash>`，见 `docs/releasing.md`）
 > **部署方式**: 默认 Docker Compose + Nginx 反代；可选二进制 + Systemd
 > **资源占用**: ~50MB 内存
 

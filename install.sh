@@ -103,12 +103,12 @@ EOF
 }
 
 # --version/--help 不依赖完整仓库，允许单文件下载后直接查询。
-for arg in "$@"; do
-    case "$arg" in
-        -h|--help) show_bootstrap_help; exit 0 ;;
-        --version) echo "${RELEASE_ID}"; exit 0 ;;
-    esac
-done
+# 仅识别首个参数：避免子命令参数中任意位置的 --help/--version 令牌被劫持而提前退出
+# （子命令级 -h 由 parse_cli_args 的 cli_usage 处理）。
+case "${1:-}" in
+    -h|--help) show_bootstrap_help; exit 0 ;;
+    --version) echo "${RELEASE_ID}"; exit 0 ;;
+esac
 
 # ==================== 路径解析 / 单文件自举 ====================
 resolve_install_dir() {
@@ -365,8 +365,9 @@ detect_arch() {
 
 check_port_available() {
     local port="$1"
-    if ss -tlnp 2>/dev/null | grep -q ":${port} " || \
-       netstat -tlnp 2>/dev/null | grep -q ":${port} "; then
+    # 精确匹配"本地地址以 :port 结尾"的字段，避免 grep ":80 " 误命中 :8080 等子串
+    if { ss -tlnH 2>/dev/null || netstat -tln 2>/dev/null; } \
+        | awk -v p=":${port}" '{ for (i = 1; i <= NF; i++) if ($i ~ (p "$")) { f = 1; exit } } END { exit(f ? 0 : 1) }'; then
         return 1
     fi
     return 0
@@ -697,8 +698,39 @@ validate_ip() {
         return 0
     fi
 
-    if [[ "$ip" == *:* && "$ip" =~ ^[0-9A-Fa-f:]+$ ]]; then
-        return 0
+    if [[ "$ip" == *:* ]]; then
+        # IPv6：字符集限定 + 结构校验（至多一个 "::"，各组 1-4 位十六进制，组数合法）
+        if ! [[ "$ip" =~ ^[0-9A-Fa-f:]+$ ]] || [[ "$ip" == *:::* ]]; then
+            log_error "IPv6 地址格式不正确: $ip"
+            return 1
+        fi
+        local ip6_compressed=0 ip6_rest ip6_norm ip6_seg ip6_ngroups=0
+        local -a ip6_parts
+        if [[ "$ip" == *"::"* ]]; then
+            ip6_compressed=1
+            ip6_rest="${ip#*::}"
+            if [[ "$ip6_rest" == *"::"* ]]; then
+                log_error "IPv6 地址格式不正确: $ip"
+                return 1
+            fi
+        fi
+        ip6_norm="${ip//::/:}"
+        IFS=':' read -ra ip6_parts <<< "$ip6_norm"
+        for ip6_seg in "${ip6_parts[@]}"; do
+            [ -z "$ip6_seg" ] && continue
+            if ! [[ "$ip6_seg" =~ ^[0-9A-Fa-f]{1,4}$ ]]; then
+                log_error "IPv6 地址格式不正确: $ip"
+                return 1
+            fi
+            ip6_ngroups=$((ip6_ngroups + 1))
+        done
+        if [ "$ip6_compressed" -eq 1 ]; then
+            [ "$ip6_ngroups" -lt 8 ] && return 0
+        else
+            [ "$ip6_ngroups" -eq 8 ] && return 0
+        fi
+        log_error "IPv6 地址格式不正确: $ip"
+        return 1
     fi
 
     log_error "IP 地址格式不正确: $ip"
@@ -990,7 +1022,7 @@ detect_installed_services() {
                 fi
                 ;;
             "$SVC_CLIPROXY")
-                if [ -f /opt/docker-services/cliproxyapi/docker-compose.yml ] \
+                if [ -f "${HAO_DOCKER_ROOT:-/opt/docker-services}/cliproxyapi/docker-compose.yml" ] \
                     || [ -f /opt/cliproxyapi/version.txt ] \
                     || [ -f /etc/systemd/system/cliproxyapi.service ]; then
                     ALREADY_INSTALLED[$svc]=true
@@ -1628,7 +1660,8 @@ AI-native server deployment and model operations toolkit
   --git-repo-dir DIR              repository 作用域的仓库目录
   --git-target-user USER          Git/gh 所属的系统用户
   --gh-auth-mode MODE             web | skip
-  --admin-password VALUE          CliproxyAPI 管理密码；省略则自动生成
+  --admin-password VALUE          CliproxyAPI 管理密码（不安全：会在 ps 中暴露）；省略则自动生成
+  --admin-password-file PATH      从文件首行读取 CliproxyAPI 管理密码（推荐替代 --admin-password）
   --allow-managed-drift           单独确认覆盖已审查的 managed 漂移
   --allow-untracked-overwrite     单独确认覆盖已审查的未跟踪目标文件
   --yes                           apply 时确认执行计划
@@ -1691,9 +1724,9 @@ print_image_candidates() {
     [ -n "$row" ] || return 0
     IFS=$'\t' read -r catalog_service default_image candidate_one candidate_two maturity checked_at <<< "$row"
     echo "    image_candidates:"
-    echo "      - $default_image (rolling default)"
-    echo "      - $candidate_one ($maturity)"
-    echo "      - $candidate_two ($maturity)"
+    echo "      - $default_image (reviewed default, $maturity)"
+    echo "      - $candidate_one (alternative)"
+    echo "      - $candidate_two (alternative)"
     echo "    candidates_checked: $checked_at"
 }
 
@@ -1781,6 +1814,14 @@ missing_option_value() {
     exit 1
 }
 
+# 校验取值型选项的取值存在且不是另一个选项（以 '-' 开头，单独的 '-' 除外）。
+# 防止 `--domain --yes` 这类把后一个 flag 静默当作取值吞掉的误解析。
+require_value() {
+    if [ "$#" -lt 2 ] || [ -z "$2" ] || { [ "${2:0:1}" = "-" ] && [ "$2" != "-" ]; }; then
+        missing_option_value "$1"
+    fi
+}
+
 parse_cli_args() {
     CLI_COMMAND="$1"
     shift || true
@@ -1792,82 +1833,112 @@ parse_cli_args() {
                 exit 0
                 ;;
             --profile)
-                CLI_PROFILE="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                CLI_PROFILE="$2"
+                shift 2
                 ;;
             --services|--service)
-                CLI_SERVICES="${2:-}"
+                require_value "$1" "${2:-}"
+                CLI_SERVICES="$2"
                 CLI_STATUS_SERVICES="$CLI_SERVICES"
-                shift 2 || missing_option_value "$1"
+                shift 2
                 ;;
             --access-mode)
-                ACCESS_MODE="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                ACCESS_MODE="$2"
+                shift 2
                 ;;
             --domain)
-                DOMAIN="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                DOMAIN="$2"
+                shift 2
                 ;;
             --cliproxy-domain)
-                CLI_CLIPROXY_DOMAIN="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                CLI_CLIPROXY_DOMAIN="$2"
+                shift 2
                 ;;
             --newapi-domain|--new-api-domain)
-                CLI_NEWAPI_DOMAIN="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                CLI_NEWAPI_DOMAIN="$2"
+                shift 2
                 ;;
             --cliproxy-mode)
-                CLIPROXY_DEPLOY_MODE="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                CLIPROXY_DEPLOY_MODE="$2"
+                shift 2
                 ;;
             --cliproxy-image)
-                CLIPROXY_IMAGE="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                CLIPROXY_IMAGE="$2"
+                shift 2
                 ;;
             --db-type)
-                DB_TYPE="${2:-}"
+                require_value "$1" "${2:-}"
+                DB_TYPE="$2"
                 DB_TYPE_EXPLICIT=true
-                shift 2 || missing_option_value "$1"
+                shift 2
                 ;;
             --newapi-image)
-                NEWAPI_IMAGE="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                NEWAPI_IMAGE="$2"
+                shift 2
                 ;;
             --newapi-action)
-                NEWAPI_ACTION="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                NEWAPI_ACTION="$2"
+                shift 2
                 ;;
             --git-name)
-                GIT_NAME="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                GIT_NAME="$2"
+                shift 2
                 ;;
             --git-email)
-                GIT_EMAIL="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                GIT_EMAIL="$2"
+                shift 2
                 ;;
             --git-machine-role)
-                GIT_MACHINE_ROLE="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                GIT_MACHINE_ROLE="$2"
+                shift 2
                 ;;
             --git-scope)
-                GIT_SCOPE="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                GIT_SCOPE="$2"
+                shift 2
                 ;;
             --git-repo-dir)
-                GIT_REPO_DIR="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                GIT_REPO_DIR="$2"
+                shift 2
                 ;;
             --git-target-user)
-                GIT_TARGET_USER="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                GIT_TARGET_USER="$2"
+                shift 2
                 ;;
             --gh-auth-mode)
-                GH_AUTH_MODE="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                GH_AUTH_MODE="$2"
+                shift 2
+                ;;
+            --admin-password-file)
+                require_value "$1" "${2:-}"
+                if [ ! -r "$2" ]; then
+                    echo "[ERROR] 无法读取 --admin-password-file 指定的文件: $2" >&2
+                    exit 1
+                fi
+                IFS= read -r ADMIN_PASSWORD < "$2" || true
+                shift 2
                 ;;
             --admin-password)
-                ADMIN_PASSWORD="${2:-}"
-                shift 2 || missing_option_value "$1"
+                require_value "$1" "${2:-}"
+                # 命令行取值会经 ps / /proc/<pid>/cmdline 暴露给本机其他用户。
+                echo "[WARN] --admin-password 会在进程命令行中暴露口令；建议改用 profile 的 HAO_ADMIN_PASSWORD 或 --admin-password-file。" >&2
+                ADMIN_PASSWORD="$2"
+                shift 2
                 ;;
             --allow-managed-drift)
                 ALLOW_MANAGED_DRIFT=true
@@ -1906,8 +1977,8 @@ parse_cli_args() {
     if [ -n "$CLIPROXY_IMAGE" ] || [ -n "${HAO_CLIPROXY_IMAGE:-}" ]; then
         CLIPROXY_IMAGE_EXPLICIT=true
     fi
-    CLIPROXY_IMAGE="${CLIPROXY_IMAGE:-${HAO_CLIPROXY_IMAGE:-eceasy/cli-proxy-api:latest}}"
-    NEWAPI_IMAGE="${NEWAPI_IMAGE:-${HAO_NEWAPI_IMAGE:-calciumion/new-api:latest}}"
+    CLIPROXY_IMAGE="${CLIPROXY_IMAGE:-${HAO_CLIPROXY_IMAGE:-eceasy/cli-proxy-api:v7.2.71}}"
+    NEWAPI_IMAGE="${NEWAPI_IMAGE:-${HAO_NEWAPI_IMAGE:-calciumion/new-api:v1.0.0-rc.21}}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-${HAO_ADMIN_PASSWORD:-}}"
     CLI_CLIPROXY_DOMAIN="${CLI_CLIPROXY_DOMAIN:-${HAO_CLIPROXY_DOMAIN:-}}"
     CLI_NEWAPI_DOMAIN="${CLI_NEWAPI_DOMAIN:-${HAO_NEWAPI_DOMAIN:-}}"

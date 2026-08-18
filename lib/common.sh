@@ -127,8 +127,9 @@ detect_arch() {
 
 check_port_available() {
     local port="$1"
-    if ss -tlnp 2>/dev/null | grep -q ":${port} " || \
-       netstat -tlnp 2>/dev/null | grep -q ":${port} "; then
+    # 精确匹配"本地地址以 :port 结尾"的字段，避免 grep ":80 " 误命中 :8080 等子串
+    if { ss -tlnH 2>/dev/null || netstat -tln 2>/dev/null; } \
+        | awk -v p=":${port}" '{ for (i = 1; i <= NF; i++) if ($i ~ (p "$")) { f = 1; exit } } END { exit(f ? 0 : 1) }'; then
         return 1
     fi
     return 0
@@ -449,6 +450,21 @@ wait_for_healthy() {
     return 1
 }
 
+# 从宿主机轮询本地端口的 TCP 可连接性，作为容器内应用的真实就绪信号
+# （比"容器 Up"更强：容器启动后应用可能崩溃或未绑定端口）。不依赖镜像内工具。
+# 用法: wait_for_local_port <port> [max_wait_seconds=60] [interval=2]
+wait_for_local_port() {
+    local port="$1" max="${2:-60}" interval="${3:-2}" waited=0
+    while [ "$waited" -lt "$max" ]; do
+        if timeout 2 bash -c ">/dev/tcp/127.0.0.1/${port}" 2>/dev/null; then
+            return 0
+        fi
+        sleep "$interval"
+        waited=$((waited + interval))
+    done
+    return 1
+}
+
 is_noninteractive() {
     [ "${HAO_UNATTENDED:-}" = "1" ]
 }
@@ -509,8 +525,39 @@ validate_ip() {
         return 0
     fi
 
-    if [[ "$ip" == *:* && "$ip" =~ ^[0-9A-Fa-f:]+$ ]]; then
-        return 0
+    if [[ "$ip" == *:* ]]; then
+        # IPv6：字符集限定 + 结构校验（至多一个 "::"，各组 1-4 位十六进制，组数合法）
+        if ! [[ "$ip" =~ ^[0-9A-Fa-f:]+$ ]] || [[ "$ip" == *:::* ]]; then
+            log_error "IPv6 地址格式不正确: $ip"
+            return 1
+        fi
+        local ip6_compressed=0 ip6_rest ip6_norm ip6_seg ip6_ngroups=0
+        local -a ip6_parts
+        if [[ "$ip" == *"::"* ]]; then
+            ip6_compressed=1
+            ip6_rest="${ip#*::}"
+            if [[ "$ip6_rest" == *"::"* ]]; then
+                log_error "IPv6 地址格式不正确: $ip"
+                return 1
+            fi
+        fi
+        ip6_norm="${ip//::/:}"
+        IFS=':' read -ra ip6_parts <<< "$ip6_norm"
+        for ip6_seg in "${ip6_parts[@]}"; do
+            [ -z "$ip6_seg" ] && continue
+            if ! [[ "$ip6_seg" =~ ^[0-9A-Fa-f]{1,4}$ ]]; then
+                log_error "IPv6 地址格式不正确: $ip"
+                return 1
+            fi
+            ip6_ngroups=$((ip6_ngroups + 1))
+        done
+        if [ "$ip6_compressed" -eq 1 ]; then
+            [ "$ip6_ngroups" -lt 8 ] && return 0
+        else
+            [ "$ip6_ngroups" -eq 8 ] && return 0
+        fi
+        log_error "IPv6 地址格式不正确: $ip"
+        return 1
     fi
 
     log_error "IP 地址格式不正确: $ip"

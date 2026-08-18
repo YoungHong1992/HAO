@@ -658,19 +658,26 @@ fix_apt_sources() {
         fi
     fi
 
-    # 清理并更新
+    # 更新软件包列表；仅在更新失败时才清理 lists 缓存后重试。
+    # 不无条件 rm -rf /var/lib/apt/lists/*：在本已可用的 apt 状态上执行破坏性清理，
+    # 一旦随后 update 失败会让主机无法安装任何软件包。
     echo -e "${DIM}更新软件包列表...${NC}"
-    apt-get clean
-    rm -rf /var/lib/apt/lists/*
-
     if apt-get update -qq 2>/dev/null; then
         log_success "apt 源配置正常"
         return 0
-    else
-        log_warning "apt 更新时有警告，尝试继续..."
-        apt-get update --allow-releaseinfo-change 2>/dev/null || true
+    fi
+
+    log_warning "apt 更新失败，清理 lists 缓存后重试..."
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+    if apt-get update -qq 2>/dev/null; then
+        log_success "apt 源配置正常"
         return 0
     fi
+
+    log_warning "apt 更新仍有警告，尝试继续..."
+    apt-get update --allow-releaseinfo-change 2>/dev/null || true
+    return 0
 }
 
 # ==================== Docker 安装核心函数 ====================
