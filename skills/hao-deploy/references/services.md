@@ -12,17 +12,21 @@ Use these IDs in `HAO_SERVICES` or `--services`:
 - `new-api`: New-API model gateway, Docker Compose deployment
 - `claude-code`: Anthropic Claude Code CLI, with optional gateway/model/token configuration
 - `uv`: uv Python package/environment manager, plus a managed "always use uv" convention block written to detected AI assistant instruction files (Claude Code, Pi, and others — see `uv/README.md` for the full detection table)
+- `node`: Node.js LTS system runtime from the NodeSource apt repo; `node`/`npm` land in `/usr/bin` for systemd units, other users, and non-login shells
+- `site`: generic multi-site deployment from git — clone, build, publish/start, Nginx vhost, Let's Encrypt certificate, and a per-site update script. Excluded from `all`; requires an explicit `HAO_SITES` list
 
 Aliases accepted by the CLI include `git`, `github`, `gh`, `newapi`, `cliproxy`,
-`cpa`, `claudecode`, `cc`, and `all`. `git-github` is deliberately excluded from
-`all` because it configures personal identity.
+`cpa`, `claudecode`, `cc`, `nodejs`, `sites`, and `all`. `git-github` is deliberately
+excluded from `all` because it configures personal identity; `site` is excluded
+because it needs a per-site configuration (`HAO_SITES`).
 
 ## Dependencies
 
 - `cliproxyapi` depends on `nginx` and `docker` in Docker mode.
 - `cliproxyapi` depends on `nginx` in bare mode.
 - `new-api` depends on `nginx` and `docker`.
-- `maintenance`, `nginx`, `docker`, `git-github`, `claude-code`, and `uv` have no root-level service dependencies.
+- `site` depends on `nginx`; node-type sites additionally need Node.js (select the `node` service or have Node.js preinstalled).
+- `maintenance`, `nginx`, `docker`, `git-github`, `claude-code`, `uv`, and `node` have no root-level service dependencies.
 
 Already installed dependencies are detected and skipped unless selected directly.
 
@@ -71,6 +75,21 @@ Already installed dependencies are detected and skipped unless selected directly
 - `HAO_UV_USER`: user whose AI-assistant instruction files receive the uv convention (default: invoking user)
 - `HAO_UV_AGENT_FILES`: comma-separated absolute paths overriding assistant auto-detection
 - `HAO_UV_SKIP_AGENT_CONVENTION`: set to `1` to install uv without writing any convention block
+- `HAO_NODE_VERSION`: Node.js major version to install from NodeSource (default `22`)
+- `HAO_NODE_ACTION`: `ensure` (default; clean no-op without touching apt when `/usr/bin/node` already matches the requested major) or `upgrade` (refresh to the latest minor of that major)
+- `HAO_SITES`: comma-separated site IDs (lowercase letters, digits, hyphens) — required when `site` is selected; each site reads a `HAO_SITE_<ID>_*` family where `<ID>` is the site ID uppercased with hyphens replaced by underscores (`blog-v2` → `HAO_SITE_BLOG_V2_*`)
+- `HAO_SITE_<ID>_REPO`: git URL (ssh/https) or local path / `file://` (required per site)
+- `HAO_SITE_<ID>_TYPE`: `static` or `node` (required per site)
+- `HAO_SITE_<ID>_DOMAIN`: site domain; empty = default site on port 80 (`server_name _`) with no certificate, allowed for at most one site per run
+- `HAO_SITE_<ID>_BRANCH`: deploy branch (default `main`)
+- `HAO_SITE_<ID>_BUILD`: static build command, run as the target user inside the clone
+- `HAO_SITE_<ID>_OUTPUT`: static output directory relative to the clone (default `build` when BUILD is set, `.` otherwise)
+- `HAO_SITE_<ID>_START`: node entry file (default `server.js`)
+- `HAO_SITE_<ID>_PORT`: node listen port; empty auto-allocates from 8100 and reuses the existing unit's port on re-runs
+- `HAO_SITE_<ID>_TARGET_USER`: existing OS user that clones/builds/runs the site (default `$SUDO_USER`, else `root`)
+- `HAO_SITE_<ID>_CERT`: `yes` (default) requests a Let's Encrypt certificate when DOMAIN is set
+- `HAO_SITE_<ID>_REDIRECT`: `yes` (default) 301s port 80 to 443 once a real certificate is issued — confirm the cloud security group allows 443 first. `no`, an empty DOMAIN, or a self-signed fallback serves the site directly on port 80
+- `HAO_SITE_<ID>_ENV`: node-only extra `Environment=` entries as `KEY=VALUE,KEY2=VALUE2` (no `PORT` here; use `HAO_SITE_<ID>_PORT`)
 - `HAO_CONFIRM_APPLY`: set to `yes` only after user confirmation
 - `HAO_ALLOW_MANAGED_DRIFT`: set to `yes` only after separately reviewing managed drift
 - `HAO_ALLOW_UNTRACKED_OVERWRITE`: set to `yes` only after separately reviewing each untracked target
@@ -82,6 +101,11 @@ selected, the target user runs `hao-github-authorize` afterwards. Root is allowe
 with a warning that credentials and SSH keys will be root-owned. Public
 repository deployment on a server normally uses `skip`; private unattended
 deployment should prefer a read-only Deploy Key or GitHub App.
+
+Deployed sites are refreshed through the generated `/usr/local/bin/hao-site-update-<id>`
+scripts — individually, or all at once via `hao update` (mutating; requires root and
+`--yes`). `hao credentials` is read-only: it lists the secret file paths recorded in
+the HAO manifest and never prints their contents.
 
 Docker images default to `latest`. The CLI plan also reads `config/image-candidates.tsv`
 and prints two reviewed fixed-tag alternatives. At the 2026-07-13 review, CliproxyAPI

@@ -10,6 +10,31 @@ when the corresponding `Release` workflow run mints it.
 First milestone marking the toolkit as production-ready after a systematic
 release-readiness review. Highlights:
 
+### New modules & CLI
+- **node**: new module installing Node.js LTS system-wide from the NodeSource apt
+  repo, so `node`/`npm` live in `/usr/bin` for systemd units, other users, and
+  non-login shells. `HAO_NODE_VERSION` (default `22`) and `HAO_NODE_ACTION`
+  (`ensure`/`upgrade`); `ensure` is a clean no-op that never touches apt when the
+  requested major version is already installed.
+- **site**: new module deploying your own projects from git — clone → build →
+  publish/start → Nginx vhost → Let's Encrypt certificate → per-site update
+  script — for any number of sites declared via `HAO_SITES` + `HAO_SITE_<ID>_*`
+  (static and Node types; node ports auto-allocate from 8100 and stay stable across
+  re-runs). The HTTP→HTTPS redirect is explicit (`HAO_SITE_<ID>_REDIRECT`, default
+  on) with a security-group 443 warning, and port 80 serves directly for
+  self-signed or domain-less sites. Excluded from `--services all`.
+- **git-github**: `hao-github-authorize` now requests the `admin:public_key` scope,
+  registers `gh` as the Git credential helper (`gh auth setup-git`), generates an
+  ed25519 keypair when missing, and uploads it via `gh ssh-key add` — printing a
+  manual fallback (paste the public key in GitHub settings) when the upload fails,
+  e.g. an expired device-code flow or an old token without the scope. `apply` in
+  `web` auth mode pre-generates the keypair.
+- **CLI**: new `hao update` subcommand (root + `--yes`) runs every generated
+  `hao-site-update-*` script; new read-only `hao credentials` lists the secret file
+  paths from the HAO manifest without printing contents. Preflight gained warn-only
+  checks for DNS-vs-public-IP mismatch, Cloudflare-proxy detection with Full
+  (strict) guidance, and a 443 security-group reminder.
+
 ### Security & correctness
 - **claude-code**: `~/.claude/settings.json` is now deep-merged instead of overwritten,
   preserving existing `permissions`/`hooks`/MCP and other keys. Sensitive values are

@@ -40,6 +40,7 @@ Call out these areas in the plan summary:
 - Maintenance baseline changes such as fail2ban, swap, journald, and Docker log rotation
 - Git identity changes and installation of the official GitHub CLI apt repository
 - Personal GitHub authorization on a server (requires separate confirmation)
+- `site` deployments: arbitrary git repositories are cloned and the user-supplied BUILD command runs as the target user; REDIRECT defaults to on, so confirm the cloud security group allows 443 — otherwise the site 301s to unreachable HTTPS (the 522 lesson)
 
 For `git-github`, ask for the exact Git name, email, target user, machine role,
 scope, and auth mode. Never infer identity from a login name, repository history,

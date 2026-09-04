@@ -17,6 +17,7 @@ sudo ./hao apply --profile deploy.env --yes              # mutates the system; O
 ./hao status                                             # read-only: what is installed
 ./hao doctor --profile deploy.env                        # read-only: status + preflight diagnostics
 ./hao inventory                                          # read-only: HAO ownership manifest
+./hao credentials                                        # read-only: credential file paths (never contents)
 ```
 
 `apply` refuses to change anything without `--yes` (or `HAO_CONFIRM_APPLY=yes`)
@@ -109,8 +110,12 @@ Changing PostgreSQL/MySQL engines is not an upgrade; HAO does not automate that 
 Git and the official GitHub CLI and configures only the identity values explicitly
 confirmed by the user. It does not perform account login. When `web` auth is
 selected, ask the target user to run `hao-github-authorize` afterwards;
-this uses GitHub web/device login with the SSH Git protocol. Personal authorization
-on a server requires the separate `HAO_GIT_ALLOW_SERVER_AUTH=yes` confirmation.
+it uses GitHub web/device login with the SSH Git protocol, requests the
+`admin:public_key` scope, registers `gh` as the Git credential helper, generates
+an ed25519 keypair when missing, and uploads the public key via `gh ssh-key add` —
+printing it for manual addition at GitHub settings when the upload fails. Personal
+authorization on a server requires the separate `HAO_GIT_ALLOW_SERVER_AUTH=yes`
+confirmation.
 Root is allowed for root-only VPS hosts, but the plan must warn that GitHub
 credentials, Git configuration, and SSH keys will then be owned by root.
 
@@ -119,7 +124,9 @@ credentials, Git configuration, and SSH keys will then be owned by root.
 `apply` may: install apt packages, enable/restart systemd services, write under
 `/opt`, `/etc/nginx`, `/etc/docker`, `/var/log/vps-deploy`, `/var/lib/hao`,
 issue SSL certificates, and replace Nginx configs for selected web services
-(existing configs are backed up first).
+(existing configs are backed up first). The `site` module additionally writes
+`/opt/hao-sites/`, `/var/www/hao-sites/`, `/etc/systemd/system/hao-site-*.service`,
+and `/usr/local/bin/hao-site-update-*`.
 
 Never run uninstall scripts, delete Docker volumes, delete SSL files, or change
 SSH hardening unless the user explicitly requests that exact operation.

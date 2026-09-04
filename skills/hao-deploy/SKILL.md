@@ -1,6 +1,6 @@
 ---
 name: hao-deploy
-description: AI-assisted deployment of HAO (HongAgentOps) services and tools on Debian or Ubuntu hosts. Use when an AI agent needs to plan, preflight, apply, inspect, or troubleshoot Maintenance, Nginx, Docker, Git/GitHub, CliproxyAPI, New-API, Claude Code, or uv using the repository's hao CLI and profile-driven workflow.
+description: AI-assisted deployment of HAO (HongAgentOps) services and tools on Debian or Ubuntu hosts. Use when an AI agent needs to plan, preflight, apply, inspect, or troubleshoot Maintenance, Nginx, Docker, Git/GitHub, CliproxyAPI, New-API, Claude Code, uv, Node.js, or git-based multi-site (site) deployments using the repository's hao CLI and profile-driven workflow.
 ---
 
 # HAO Deploy
@@ -73,6 +73,18 @@ HAO_ACCESS_MODE="domain"
 HAO_CLIPROXY_DOMAIN="cpa.example.com"
 HAO_NEWAPI_DOMAIN="api.example.com"
 ```
+
+Deploy your own sites with the `site` module (excluded from `all`; node-type sites also need `node` in `HAO_SERVICES`):
+
+```bash
+HAO_SERVICES="nginx,site"
+HAO_SITES="blog"
+HAO_SITE_BLOG_REPO="git@github.com:me/blog.git"
+HAO_SITE_BLOG_TYPE="static"
+HAO_SITE_BLOG_DOMAIN="blog.example.com"
+```
+
+Re-deploy updated site code with `hao update` (root + `--yes`), which runs every generated `hao-site-update-*` script; `hao credentials` lists credential file paths read-only.
 
 ## Safety
 

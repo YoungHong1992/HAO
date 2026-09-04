@@ -42,6 +42,15 @@ jobs:
       - name: uv real install idempotency
         run: sudo ./tests/test-uv-idempotency.sh
 
+      - name: Node.js real install idempotency
+        run: sudo ./tests/test-node-idempotency.sh
+
+      - name: Install Nginx via the HAO module
+        run: sudo HAO_UNATTENDED=1 ./nginx/install.sh
+
+      - name: Site real deploy idempotency
+        run: sudo ./tests/test-site-idempotency.sh
+
       - name: Maintenance real install idempotency
         run: sudo ./tests/test-maintenance-idempotency.sh
 
@@ -115,7 +124,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist/hao
-          cp -a hao install.sh lib maintenance nginx docker git-github cliproxyapi new-api claude-code uv README.md AGENTS.md docs skills config LICENSE RELEASE build-info.json dist/hao/
+          cp -a hao install.sh lib maintenance nginx docker git-github cliproxyapi new-api claude-code uv node site README.md AGENTS.md docs skills config LICENSE RELEASE build-info.json dist/hao/
           tar czf hao.tar.gz -C dist hao
           sha256sum hao.tar.gz > checksums.txt
 

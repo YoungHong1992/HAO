@@ -101,6 +101,8 @@ sudo ./hao apply --profile deploy.env --yes   # 确认后才执行
 | **New-API** | AI 模型网关与资产管理系统，Docker Compose | ≥ 1GB 内存 |
 | **Claude Code** | Anthropic 官方终端 AI 编程助手，可选自定义网关/模型 | 500MB 磁盘 |
 | **uv** | uv Python 包/环境管理器 + AI 助手虚拟环境使用约定 | 50MB 磁盘 |
+| **Node.js** | Node.js LTS 系统级运行时（NodeSource apt 仓库，node/npm 落在 `/usr/bin`） | 运行时，无额外需求 |
+| **Site** | 通用站点部署：git → 构建 → Nginx → 证书，支持多站点；不包含在 `all` | 静态站无额外需求 / Node 应用按应用而定 |
 
 CliproxyAPI / New-API 依赖 Nginx（Docker Compose 部署还依赖 Docker），缺少依赖时脚本会提示先安装。CPA 裸机模式：`HAO_CLIPROXY_MODE=bare`。
 
@@ -131,6 +133,24 @@ cpa.example.com ──┘
 - root-only VPS 可明确选择 `root`，HAO 会警告凭据和 SSH Key 归 root 所有，但不阻止授权
 
 </details>
+
+## 部署自己的项目
+
+除内置服务外，`site` 组件可以部署你自己的站点：声明若干 git 仓库，HAO 完成 克隆 → 构建 → 发布/启动 → Nginx 虚拟主机 → Let's Encrypt 证书 → 更新脚本 的全流程。适合 Docusaurus/VitePress/Hugo 等静态站点，以及自带 `server.js` 的 Node 应用。
+
+最小示例（一个来自 git 仓库的静态站 + 域名）：
+
+```bash
+HAO_SERVICES="nginx,site"
+HAO_SITES="blog"
+HAO_SITE_BLOG_REPO="git@github.com:me/blog.git"   # git URL 或本地路径
+HAO_SITE_BLOG_TYPE="static"                       # static | node
+HAO_SITE_BLOG_DOMAIN="blog.example.com"
+HAO_SITE_BLOG_BUILD="npm ci && npm run build"     # 无需构建可省略
+HAO_SITE_BLOG_OUTPUT="build"
+```
+
+`site` 不包含在 `all` 中，必须显式声明 `HAO_SITES`；每个站点读取一组 `HAO_SITE_<ID>_*` 变量，一次运行可部署多个站点。部署后用 `sudo ./hao update` 依次运行全部站点更新脚本。默认在真实证书签发后开启 80→443 跳转，请先确认云安全组已放行 443/TCP（否则用 `HAO_SITE_BLOG_REDIRECT=no` 关闭）。完整变量、Node 应用配置与多站点模型见 [`site/README.md`](site/README.md)；配合 Cloudflare 代理见 [Cloudflare DNS 配置指南](docs/cloudflare-dns-guide.md)。
 
 ## 资源归属与审计
 
@@ -197,6 +217,7 @@ cd ../cliproxyapi && sudo ./install.sh     # CliproxyAPI（默认 Docker Compose
 cd ../new-api && sudo ./install.sh         # New-API
 cd ../claude-code && sudo ./install.sh     # Claude Code
 cd ../uv && sudo ./install.sh              # uv + Python 环境约定
+cd ../node && sudo ./install.sh            # Node.js LTS（NodeSource，系统级）
 ```
 
 `git-github` 需要逐项确认身份信息：
@@ -211,6 +232,17 @@ cd git-github && sudo \
   ./install.sh
 ```
 
+`site` 的全部配置通过环境变量传入（无交互确认，依赖 Nginx）：
+
+```bash
+cd site && sudo \
+  HAO_SITES="blog" \
+  HAO_SITE_BLOG_REPO="git@github.com:me/blog.git" \
+  HAO_SITE_BLOG_TYPE=static \
+  HAO_SITE_BLOG_DOMAIN="blog.example.com" \
+  ./install.sh
+```
+
 </details>
 
 ## 配置参考
@@ -218,7 +250,7 @@ cd git-github && sudo \
 Profile 支持的常用变量（也可用等价 CLI 参数）：
 
 ```bash
-HAO_SERVICES="maintenance,nginx,docker,cliproxyapi,new-api,claude-code,uv"
+HAO_SERVICES="maintenance,nginx,docker,cliproxyapi,new-api,claude-code,uv,node"
 HAO_ACCESS_MODE="domain"       # domain | ip | http
 HAO_CLIPROXY_DOMAIN="cpa.example.com"
 HAO_NEWAPI_DOMAIN="api.example.com"

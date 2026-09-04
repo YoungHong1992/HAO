@@ -8,6 +8,8 @@ on:
       - 'new-api/**'
       - 'cliproxyapi/**'
       - 'uv/**'
+      - 'node/**'
+      - 'site/**'
       - 'lib/**'
       - 'install.sh'
       - 'tests/test-maintenance-idempotency.sh'
@@ -15,6 +17,10 @@ on:
       - 'tests/test-newapi-idempotency.sh'
       - 'tests/test-cliproxyapi-idempotency.sh'
       - 'tests/test-uv-idempotency.sh'
+      - 'tests/test-node.sh'
+      - 'tests/test-node-idempotency.sh'
+      - 'tests/test-site.sh'
+      - 'tests/test-site-idempotency.sh'
       - '.github/workflows/integration.yml'
 
 jobs:
@@ -81,3 +87,28 @@ jobs:
 
       - name: Run uv installer twice and preinstall Python
         run: sudo ./tests/test-uv-idempotency.sh
+
+  node-idempotency:
+    name: Node.js real install idempotency
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run node installer twice and an explicit upgrade
+        run: sudo ./tests/test-node-idempotency.sh
+
+  site-idempotency:
+    name: Site real deploy idempotency
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nginx via the HAO module
+        run: sudo HAO_UNATTENDED=1 ./nginx/install.sh
+
+      - name: Run site deploy twice and the generated update script
+        run: sudo ./tests/test-site-idempotency.sh
