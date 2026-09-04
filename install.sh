@@ -28,6 +28,8 @@
 #   5. New-API            - AI 模型网关与资产管理系统
 #   6. Claude Code        - Anthropic 官方终端 AI 编程助手
 #   7. uv                 - Python 包/环境管理器 + AI 助手使用约定
+#   8. Node.js (LTS)      - NodeSource 官方仓库系统级 Node.js 运行时
+#   9. Site 站点部署      - 从 git 仓库构建并发布静态站或 Node 应用（支持多站点）
 #
 ################################################################################
 
@@ -90,6 +92,8 @@ AI-native server deployment and model operations toolkit
   ./hao status
   ./hao doctor --profile deploy.env
   ./hao inventory
+  ./hao update --yes
+  ./hao credentials
   ./hao -h
   ./hao --version
 
@@ -162,6 +166,10 @@ bootstrap_full_repo() {
         || [ ! -f "$root_dir/new-api/install.sh" ] \
         || [ ! -f "$root_dir/claude-code/install.sh" ] \
         || [ ! -f "$root_dir/uv/install.sh" ] \
+        || [ ! -f "$root_dir/node/install.sh" ] \
+        || [ ! -f "$root_dir/node/README.md" ] \
+        || [ ! -f "$root_dir/site/install.sh" ] \
+        || [ ! -f "$root_dir/site/README.md" ] \
         || [ ! -f "$root_dir/lib/common.sh" ] \
         || [ ! -f "$root_dir/lib/crypto.sh" ] \
         || [ ! -f "$root_dir/lib/credentials.sh" ] \
@@ -198,6 +206,10 @@ if [ ! -f "$INSTALL_DIR/maintenance/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/new-api/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/claude-code/install.sh" ] \
     || [ ! -f "$INSTALL_DIR/uv/install.sh" ] \
+    || [ ! -f "$INSTALL_DIR/node/install.sh" ] \
+    || [ ! -f "$INSTALL_DIR/node/README.md" ] \
+    || [ ! -f "$INSTALL_DIR/site/install.sh" ] \
+    || [ ! -f "$INSTALL_DIR/site/README.md" ] \
     || [ ! -f "$INSTALL_DIR/lib/common.sh" ] \
     || [ ! -f "$INSTALL_DIR/lib/crypto.sh" ] \
     || [ ! -f "$INSTALL_DIR/lib/credentials.sh" ] \
@@ -771,6 +783,11 @@ escape_double_quoted() {
     printf '%s' "$value"
 }
 
+# 仓库地址可能内嵌凭据（https://user:token@...），plan/日志中只显示脱敏形式
+sanitize_repo_url() {
+    printf '%s' "$1" | sed -E 's#(://)[^/@]+@#\1***@#'
+}
+
 # ==================== 帮助信息 ====================
 show_help() {
     cat <<EOF
@@ -784,6 +801,8 @@ AI-native server deployment and model operations toolkit
   ./hao status
   ./hao doctor --profile deploy.env
   ./hao inventory
+  ./hao update --yes    # 更新全部已部署站点
+  ./hao credentials     # 列出凭据文件路径（不显示内容）
   ./hao -h
   ./hao --version
 
@@ -803,6 +822,8 @@ AI 协作流程:
   New-API                  AI 模型网关与资产管理系统 (需 ≥1GB 内存)
   Claude Code              Anthropic 官方终端 AI 编程助手 (500MB 磁盘)
   uv                       Python 包/环境管理器 + AI 助手使用约定
+  Node.js (LTS)            NodeSource 官方仓库系统级运行时（/usr/bin/node）
+  Site 站点部署            从 git 仓库构建并发布静态站或 Node 应用（多站点，需 HAO_SITES）
 
 注意:
   - 需要 root 权限
@@ -815,7 +836,7 @@ EOF
 
 # ==================== 参数解析 ====================
 case "${1:-}" in
-    plan|preflight|apply|status|doctor|inventory|help) ;;
+    plan|preflight|apply|status|doctor|inventory|update|credentials|help) ;;
     *)
         for arg in "$@"; do
             case "$arg" in
@@ -838,6 +859,8 @@ readonly SVC_CLIPROXY="cliproxyapi"
 readonly SVC_NEWAPI="newapi"
 readonly SVC_CLAUDECODE="claude-code"
 readonly SVC_UV="uv"
+readonly SVC_NODE="node"
+readonly SVC_SITE="site"
 
 # Service definitions (order = dependency order)
 declare -A SVC_NAME SVC_DESC SVC_HINT SVC_SCRIPT SVC_DEPENDS
@@ -889,15 +912,29 @@ SVC_HINT[$SVC_UV]="50MB 磁盘"
 SVC_SCRIPT[$SVC_UV]="$INSTALL_DIR/uv/install.sh"
 SVC_DEPENDS[$SVC_UV]=""
 
+SVC_NAME[$SVC_NODE]="Node.js (LTS)"
+SVC_DESC[$SVC_NODE]="Node.js LTS 运行时（NodeSource 官方仓库）"
+SVC_HINT[$SVC_NODE]="NodeSource apt 仓库"
+SVC_SCRIPT[$SVC_NODE]="$INSTALL_DIR/node/install.sh"
+SVC_DEPENDS[$SVC_NODE]=""
+
+SVC_NAME[$SVC_SITE]="Site 站点部署"
+SVC_DESC[$SVC_SITE]="通用站点部署：从 git 仓库构建并发布静态站或 Node 应用（支持多站点）"
+SVC_HINT[$SVC_SITE]="需 HAO_SITES 配置"
+SVC_SCRIPT[$SVC_SITE]="$INSTALL_DIR/site/install.sh"
+SVC_DEPENDS[$SVC_SITE]="$SVC_NGINX"
+
 # Ordered list for display
 readonly ALL_SERVICES=(
     "$SVC_MAINTENANCE" "$SVC_NGINX" "$SVC_DOCKER"
     "$SVC_CLIPROXY" "$SVC_NEWAPI" "$SVC_GITGITHUB" "$SVC_CLAUDECODE" "$SVC_UV"
+    "$SVC_NODE" "$SVC_SITE"
 )
 # Personal identity tooling is opt-in and intentionally excluded from `--services all`.
+# site 需要显式的 HAO_SITES 站点配置，同样不包含在 `all` 中（与 git-github 同理）。
 readonly DEFAULT_ALL_SERVICES=(
     "$SVC_MAINTENANCE" "$SVC_NGINX" "$SVC_DOCKER"
-    "$SVC_CLIPROXY" "$SVC_NEWAPI" "$SVC_CLAUDECODE" "$SVC_UV"
+    "$SVC_CLIPROXY" "$SVC_NEWAPI" "$SVC_CLAUDECODE" "$SVC_UV" "$SVC_NODE"
 )
 
 # Runtime state
@@ -928,6 +965,7 @@ GIT_SCOPE=""
 GIT_REPO_DIR=""
 GIT_TARGET_USER=""
 GH_AUTH_MODE=""
+SITE_IDS=()                  # site 服务：HAO_SITES 解析出的站点 ID 列表
 ALLOW_MANAGED_DRIFT=false
 ALLOW_UNTRACKED_OVERWRITE=false
 
@@ -959,6 +997,7 @@ reset_iteration_state() {
     GIT_REPO_DIR=""
     GIT_TARGET_USER=""
     GH_AUTH_MODE=""
+    SITE_IDS=()
     ALLOW_MANAGED_DRIFT=false
     ALLOW_UNTRACKED_OVERWRITE=false
 
@@ -1043,6 +1082,20 @@ detect_installed_services() {
                     ALREADY_INSTALLED[$svc]=true
                 fi
                 ;;
+            "$SVC_NODE")
+                if [ -x /usr/bin/node ]; then
+                    ALREADY_INSTALLED[$svc]=true
+                fi
+                ;;
+            "$SVC_SITE")
+                local site_update_script
+                for site_update_script in /usr/local/bin/hao-site-update-*; do
+                    if [ -e "$site_update_script" ]; then
+                        ALREADY_INSTALLED[$svc]=true
+                        break
+                    fi
+                done
+                ;;
         esac
     done
 }
@@ -1059,6 +1112,8 @@ service_short_name() {
         "$SVC_NEWAPI")   echo "New-API" ;;
         "$SVC_CLAUDECODE") echo "Claude Code" ;;
         "$SVC_UV")       echo "uv" ;;
+        "$SVC_NODE")     echo "Node.js" ;;
+        "$SVC_SITE")     echo "Site" ;;
         *)                echo "$1" ;;
     esac
 }
@@ -1206,8 +1261,10 @@ needs_access_mode() {
 
 collect_service_resource_candidates() {
     local svc="$1" output_name="$2" domain_value binary target_home public_key
+    local site_id site_prefix site_type_var site_type site_domain_var site_domain_value
     local docker_root="${HAO_DOCKER_ROOT:-/opt/docker-services}"
     local nginx_conf_dir="${HAO_NGINX_CONF_DIR:-/etc/nginx/conf.d}"
+    local nginx_ssl_dir="${HAO_NGINX_SSL_DIR:-/etc/nginx/ssl}"
     local -n output="$output_name"
     output=()
 
@@ -1299,6 +1356,34 @@ collect_service_resource_candidates() {
             [ -n "$binary" ] && output+=("managed:$binary")
             binary="$(command -v uvx 2>/dev/null || true)"
             [ -n "$binary" ] && output+=("managed:$binary")
+            ;;
+        "$SVC_NODE")
+            output+=(
+                "auto:/etc/apt/sources.list.d/nodesource.list"
+                "observed:/usr/bin/node"
+                "observed:/usr/bin/npm"
+            )
+            ;;
+        "$SVC_SITE")
+            for site_id in "${SITE_IDS[@]}"; do
+                site_prefix="$(printf '%s' "$site_id" | tr 'a-z-' 'A-Z_')"
+                site_type_var="HAO_SITE_${site_prefix}_TYPE"
+                site_type="${!site_type_var:-}"
+                site_domain_var="HAO_SITE_${site_prefix}_DOMAIN"
+                site_domain_value="${!site_domain_var:-}"
+                output+=(
+                    "auto:$nginx_conf_dir/hao-site-${site_id}.conf"
+                    "auto:/usr/local/bin/hao-site-update-${site_id}"
+                    "observed:/opt/hao-sites/${site_id}"
+                )
+                if [ "$site_type" = "node" ]; then
+                    output+=("auto:/etc/systemd/system/hao-site-${site_id}.service")
+                fi
+                if [ "$site_type" = "static" ]; then
+                    output+=("observed:/var/www/hao-sites/${site_id}")
+                fi
+                [ -n "$site_domain_value" ] && output+=("observed:$nginx_ssl_dir/$site_domain_value")
+            done
             ;;
     esac
 }
@@ -1499,6 +1584,14 @@ run_install() {
                 # HAO_UV_* 配置变量由 profile 导出后随环境继承，无需逐个转发。
                 extra_env+=("HAO_NO_PROMPT=1")
                 ;;
+            "$SVC_NODE")
+                # HAO_NODE_* 配置变量由 profile 导出后随环境继承，无需逐个转发。
+                extra_env+=("HAO_NO_PROMPT=1")
+                ;;
+            "$SVC_SITE")
+                # HAO_SITES / HAO_SITE_* 配置变量由 profile 导出后随环境继承，无需逐个转发。
+                extra_env+=("HAO_NO_PROMPT=1")
+                ;;
         esac
 
         # Component install.sh owns idempotency/repair/skip behavior.
@@ -1535,6 +1628,7 @@ run_install() {
 # ==================== 总结 ====================
 
 print_summary() {
+    local site_id
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║         部署完成总结                 ║${NC}"
@@ -1616,6 +1710,20 @@ print_summary() {
                 echo "    Python 项目约定已写入已检测到的 AI 助手指令文件"
                 echo ""
                 ;;
+            "$SVC_NODE")
+                echo "  Node.js:"
+                echo "    node --version  |  npm --version  |  npm install -g <pkg>"
+                echo "    升级到最新小版本: HAO_NODE_ACTION=upgrade"
+                echo ""
+                ;;
+            "$SVC_SITE")
+                echo "  Site:"
+                for site_id in "${SITE_IDS[@]}"; do
+                    echo "    sudo hao-site-update-$site_id    # 拉取最新代码并重新发布/重启"
+                done
+                echo "    sudo hao update --yes    # 更新全部站点"
+                echo ""
+                ;;
         esac
     done
 
@@ -1640,10 +1748,12 @@ AI-native server deployment and model operations toolkit
   ./hao status [--services all|new-api,cliproxyapi]
   ./hao doctor [--profile deploy.env]
   ./hao inventory
+  ./hao update [--yes]                  运行全部已部署站点的更新脚本
+  ./hao credentials                     列出已登记的凭据文件路径（不显示内容）
 
 通用参数:
   --profile FILE                  读取 .env 风格部署配置
-  --services LIST                 逗号分隔服务: maintenance,nginx,docker,cliproxyapi,new-api,git-github,claude-code,uv
+  --services LIST                 逗号分隔服务: maintenance,nginx,docker,cliproxyapi,new-api,git-github,claude-code,uv,node,site
   --access-mode MODE              domain | ip | http
   --domain VALUE                  单个 Web 服务域名/IP
   --cliproxy-domain VALUE         CliproxyAPI 专用域名
@@ -1664,7 +1774,7 @@ AI-native server deployment and model operations toolkit
   --admin-password-file PATH      从文件首行读取 CliproxyAPI 管理密码（推荐替代 --admin-password）
   --allow-managed-drift           单独确认覆盖已审查的 managed 漂移
   --allow-untracked-overwrite     单独确认覆盖已审查的未跟踪目标文件
-  --yes                           apply 时确认执行计划
+  --yes                           apply/update 时确认执行计划
 
 Profile 示例:
   HAO_SERVICES="maintenance,nginx,docker,new-api"
@@ -1674,10 +1784,18 @@ Profile 示例:
   HAO_NEWAPI_ACTION="ensure"
   HAO_CONFIRM_APPLY="yes"
 
+site 站点部署示例（site 不包含在 --services all 中，必须显式选择）:
+  HAO_SERVICES="nginx,node,site"
+  HAO_SITES="blog"
+  HAO_SITE_BLOG_REPO="git@github.com:me/blog.git"
+  HAO_SITE_BLOG_TYPE="static"               # static | node
+  HAO_SITE_BLOG_DOMAIN="blog.example.com"
+
 说明:
   git-github 必须显式选择，不包含在 --services all 中；姓名和邮箱永不自动推导。
-  plan/preflight/status/doctor/inventory 不执行安装。apply 只接受明确参数或 profile，
-  并且需要 --yes 或 HAO_CONFIRM_APPLY=yes 才会真正修改系统。
+  plan/preflight/status/doctor/inventory/credentials 不修改系统。
+  apply 与 update 只接受明确参数或 profile，并且需要 --yes 或 HAO_CONFIRM_APPLY=yes
+  才会真正修改系统。
 EOF
 }
 
@@ -1702,6 +1820,8 @@ normalize_service_id() {
         newapi|new-api) echo "$SVC_NEWAPI" ;;
         claude-code|claudecode|claude|cc) echo "$SVC_CLAUDECODE" ;;
         uv|python-uv|uvx) echo "$SVC_UV" ;;
+        node|nodejs) echo "$SVC_NODE" ;;
+        site|sites) echo "$SVC_SITE" ;;
         *)
             echo "未知服务: $1" >&2
             return 1
@@ -2131,6 +2251,37 @@ validate_cli_config() {
         fi
     fi
 
+    # site：根 CLI 只做存在性检查，深度校验（ID 合法性、端口、路径安全等）由 site 模块负责
+    if [ "${TO_INSTALL[$SVC_SITE]:-}" = "true" ]; then
+        local site_id site_raw_entry site_prefix site_repo_var site_type_var
+        local -a site_entries=()
+        if [ -z "${HAO_SITES:-}" ]; then
+            echo "[ERROR] site 服务需要 HAO_SITES（逗号分隔的站点 ID 列表），例如: HAO_SITES=\"blog\"。" >&2
+            exit 1
+        fi
+        SITE_IDS=()
+        IFS=',' read -r -a site_entries <<< "$HAO_SITES"
+        for site_raw_entry in "${site_entries[@]}"; do
+            site_id="$(trim_value "$site_raw_entry")"
+            if [ -z "$site_id" ]; then
+                echo "[ERROR] HAO_SITES 包含空条目: $HAO_SITES" >&2
+                exit 1
+            fi
+            site_prefix="$(printf '%s' "$site_id" | tr 'a-z-' 'A-Z_')"
+            site_repo_var="HAO_SITE_${site_prefix}_REPO"
+            site_type_var="HAO_SITE_${site_prefix}_TYPE"
+            if [ -z "${!site_repo_var:-}" ]; then
+                echo "[ERROR] 站点 '$site_id' 缺少 $site_repo_var（Git 仓库地址或本地路径）。" >&2
+                exit 1
+            fi
+            if [ -z "${!site_type_var:-}" ]; then
+                echo "[ERROR] 站点 '$site_id' 缺少 $site_type_var（可选: static | node）。" >&2
+                exit 1
+            fi
+            SITE_IDS+=("$site_id")
+        done
+    fi
+
     if [ -z "$CLIPROXY_IMAGE" ] || [ -z "$NEWAPI_IMAGE" ]; then
         echo "[ERROR] Docker 镜像名称不能为空。" >&2
         exit 1
@@ -2202,6 +2353,10 @@ prepare_cli_plan() {
 
 print_cli_plan() {
     local svc dep domain_value any_mutation=false
+    local site_id site_prefix site_repo_var site_repo site_type_var site_type
+    local site_domain_var site_domain_value site_port_var site_port
+    local site_cert_var site_cert site_redirect_var site_redirect site_user_var site_user
+    local manual_header_printed=false site_manual_server_ip
 
     echo "HAO deployment plan"
     echo "Release: ${RELEASE_ID}"
@@ -2298,6 +2453,39 @@ print_cli_plan() {
                         echo "    agent_convention: auto-detect (Claude Code/Pi/Codex/OpenCode)"
                     fi
                     ;;
+                "$SVC_NODE")
+                    echo "    version: ${HAO_NODE_VERSION:-22}.x (NodeSource apt)"
+                    echo "    action: ${HAO_NODE_ACTION:-ensure}"
+                    ;;
+                "$SVC_SITE")
+                    for site_id in "${SITE_IDS[@]}"; do
+                        site_prefix="$(printf '%s' "$site_id" | tr 'a-z-' 'A-Z_')"
+                        site_repo_var="HAO_SITE_${site_prefix}_REPO"
+                        site_repo="${!site_repo_var:-}"
+                        site_type_var="HAO_SITE_${site_prefix}_TYPE"
+                        site_type="${!site_type_var:-}"
+                        site_domain_var="HAO_SITE_${site_prefix}_DOMAIN"
+                        site_domain_value="${!site_domain_var:-}"
+                        site_port_var="HAO_SITE_${site_prefix}_PORT"
+                        site_port="${!site_port_var:-}"
+                        site_cert_var="HAO_SITE_${site_prefix}_CERT"
+                        site_cert="${!site_cert_var:-yes}"
+                        site_redirect_var="HAO_SITE_${site_prefix}_REDIRECT"
+                        site_redirect="${!site_redirect_var:-yes}"
+                        site_user_var="HAO_SITE_${site_prefix}_TARGET_USER"
+                        site_user="${!site_user_var:-${SUDO_USER:-root}}"
+                        echo "    site[$site_id]:"
+                        echo "      type: $site_type"
+                        echo "      repo: $(sanitize_repo_url "$site_repo")"
+                        echo "      domain: ${site_domain_value:--}"
+                        if [ "$site_type" = "node" ]; then
+                            echo "      port: ${site_port:-auto (8100+)}"
+                        fi
+                        echo "      cert: $site_cert"
+                        echo "      redirect: $site_redirect"
+                        echo "      target_user: $site_user"
+                    done
+                    ;;
             esac
         done
     fi
@@ -2323,6 +2511,41 @@ print_cli_plan() {
     if [ "$ALLOW_UNTRACKED_OVERWRITE" = "true" ]; then
         echo "  - Explicit override: reviewed untracked target files may be overwritten"
     fi
+
+    # ---- 需要人工完成的外部操作（仅相关服务被选择时显示）----
+    if [ "${TO_INSTALL[$SVC_GITGITHUB]:-}" = "true" ] && [ "$GH_AUTH_MODE" = "web" ]; then
+        echo ""
+        echo "需要人工完成的外部操作:"
+        manual_header_printed=true
+        echo "  - GitHub 授权: 以目标用户 $GIT_TARGET_USER 运行 hao-github-authorize"
+        echo "      （设备码约 15 分钟有效；若自动上传公钥失败，可手动粘贴公钥到 GitHub Settings → SSH keys）"
+    fi
+    if [ "${TO_INSTALL[$SVC_SITE]:-}" = "true" ] && [ "${#SITE_IDS[@]}" -gt 0 ]; then
+        site_manual_server_ip=""
+        for site_id in "${SITE_IDS[@]}"; do
+            site_prefix="$(printf '%s' "$site_id" | tr 'a-z-' 'A-Z_')"
+            site_domain_var="HAO_SITE_${site_prefix}_DOMAIN"
+            site_domain_value="${!site_domain_var:-}"
+            [ -n "$site_domain_value" ] || continue
+            if [ "$manual_header_printed" = false ]; then
+                echo ""
+                echo "需要人工完成的外部操作:"
+                manual_header_printed=true
+            fi
+            if [ -z "$site_manual_server_ip" ]; then
+                site_manual_server_ip="$(detect_server_ip)"
+            fi
+            echo "  - 站点 $site_id ($site_domain_value):"
+            if [ -n "$site_manual_server_ip" ]; then
+                echo "      1) 确认 DNS A 记录指向本机公网 IP: $site_manual_server_ip"
+            else
+                echo "      1) 确认 DNS A 记录指向本机公网 IP（公网 IP 检测失败，请手动查询）"
+            fi
+            echo "      2) 在云控制台安全组放通 TCP 80/443"
+            echo "      3) 若域名套了 Cloudflare 代理，SSL/TLS 模式选 Full (strict)"
+            echo "      4) 若暂时打不通 443，先设 HAO_SITE_${site_prefix}_REDIRECT=no 避免 HTTP 被 301 到不可达的 HTTPS"
+        done
+    fi
 }
 
 report_check() {
@@ -2334,9 +2557,46 @@ report_check() {
     printf '\n'
 }
 
+# 解析域名的 IPv4 地址（去重，每行一个）；离线/超时静默返回空，永不报错
+resolve_domain_ipv4() {
+    local domain="$1" ips=""
+    if command -v getent >/dev/null 2>&1; then
+        ips="$(timeout 5 getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | sort -u)"
+    fi
+    if [ -z "$ips" ] && command -v dig >/dev/null 2>&1; then
+        ips="$(dig +short +time=2 +tries=1 A "$domain" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u)"
+    fi
+    printf '%s' "$ips"
+}
+
+# Cloudflare 任播段（开启代理的域名解析结果；与官网 https://www.cloudflare.com/ips-v4 对应）
+is_cloudflare_ip() {
+    case "$1" in
+        104.1[6-9].*|104.2[0-9].*|104.3[0-1].*) return 0 ;;
+        172.6[4-9].*|172.7[0-1].*) return 0 ;;
+        162.158.*|162.159.*) return 0 ;;
+        188.114.*) return 0 ;;
+        141.101.*) return 0 ;;
+        190.93.*) return 0 ;;
+        108.162.*) return 0 ;;
+        131.0.72.*) return 0 ;;
+        173.245.*) return 0 ;;
+        103.21.244.*) return 0 ;;
+        103.22.200.*) return 0 ;;
+        103.31.4.*) return 0 ;;
+        197.234.*) return 0 ;;
+        198.41.12[89].*|198.41.1[3-9][0-9].*|198.41.2[0-4][0-9].*|198.41.25[0-5].*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 run_preflight_checks() {
     local failures=0 warnings=0 svc domain_value server_ip resolved_ips required
     local os os_version arch target_home git_config_file current_name current_email
+    local site_id site_prefix site_domain_var site_domain_value public_ip resolved_ip
+    local cf_detected ip_mismatch
+    local -a ext_domains=()
+    local -A ext_seen=()
 
     os="$(detect_os)"
     os_version="$(detect_os_version_id)"
@@ -2507,6 +2767,69 @@ run_preflight_checks() {
         done
     fi
 
+    # ---- 外部 DNS/接入检查（仅警告，永不失败；离线时优雅跳过）----
+    ext_domains=()
+    ext_seen=()
+    for svc in "${INSTALL_ORDER[@]}"; do
+        if is_web_service "$svc" && [ "$ACCESS_MODE" = "domain" ]; then
+            domain_value="${SERVICE_DOMAIN[$svc]:-}"
+            if [ -n "$domain_value" ] && [ -z "${ext_seen[$domain_value]:-}" ]; then
+                ext_seen[$domain_value]=1
+                ext_domains+=("$domain_value")
+            fi
+        fi
+    done
+    if [ "${TO_INSTALL[$SVC_SITE]:-}" = "true" ]; then
+        for site_id in "${SITE_IDS[@]}"; do
+            site_prefix="$(printf '%s' "$site_id" | tr 'a-z-' 'A-Z_')"
+            site_domain_var="HAO_SITE_${site_prefix}_DOMAIN"
+            site_domain_value="${!site_domain_var:-}"
+            if [ -n "$site_domain_value" ] && [ -z "${ext_seen[$site_domain_value]:-}" ]; then
+                ext_seen[$site_domain_value]=1
+                ext_domains+=("$site_domain_value")
+            fi
+        done
+    fi
+    if [ "${#ext_domains[@]}" -gt 0 ]; then
+        echo ""
+        echo "External DNS checks (warn-only):"
+        public_ip="$(detect_server_ip)"
+        if [ -z "$public_ip" ]; then
+            report_check "warn" "Public IP" "无法检测本机公网 IP（可能离线），跳过解析一致性比对"
+            warnings=$((warnings + 1))
+        fi
+        for domain_value in "${ext_domains[@]}"; do
+            resolved_ips="$(resolve_domain_ipv4 "$domain_value")"
+            if [ -z "$resolved_ips" ]; then
+                if [ -n "$public_ip" ]; then
+                    report_check "warn" "DNS $domain_value" "无法解析；请添加 DNS A 记录指向 $public_ip"
+                else
+                    report_check "warn" "DNS $domain_value" "无法解析；请添加指向本机公网 IP 的 DNS A 记录"
+                fi
+                warnings=$((warnings + 1))
+                continue
+            fi
+            cf_detected=false
+            ip_mismatch=false
+            for resolved_ip in $resolved_ips; do
+                if is_cloudflare_ip "$resolved_ip"; then
+                    cf_detected=true
+                elif [ -n "$public_ip" ] && [ "$resolved_ip" != "$public_ip" ]; then
+                    ip_mismatch=true
+                fi
+            done
+            if [ "$cf_detected" = true ]; then
+                report_check "warn" "DNS $domain_value" "检测到 Cloudflare 代理（任播 IP）；SSL/TLS 模式需设为 Full (strict)"
+                warnings=$((warnings + 1))
+            elif [ "$ip_mismatch" = true ]; then
+                report_check "warn" "DNS $domain_value" "域名解析IP ($(printf '%s' "$resolved_ips" | paste -sd, -)) 与本机公网IP ($public_ip) 不一致"
+                warnings=$((warnings + 1))
+            else
+                report_check "ok" "DNS $domain_value" "$(printf '%s' "$resolved_ips" | paste -sd, -)"
+            fi
+        done
+    fi
+
     echo ""
     echo "Apply resource safety"
     if run_apply_resource_safety_checks; then
@@ -2518,6 +2841,32 @@ run_preflight_checks() {
     echo ""
     echo "Preflight summary: $failures failure(s), $warnings warning(s)"
     [ "$failures" -eq 0 ]
+}
+
+# status 详情：列出已部署站点 ID 与域名（从 site 模块生成的 vhost/更新脚本解析）
+site_status_details() {
+    local script id domain details=""
+    local nginx_conf_dir="${HAO_NGINX_CONF_DIR:-/etc/nginx/conf.d}"
+    for script in /usr/local/bin/hao-site-update-*; do
+        [ -e "$script" ] || continue
+        id="${script##*/}"
+        id="${id#hao-site-update-}"
+        domain=""
+        if [ -f "$nginx_conf_dir/hao-site-${id}.conf" ]; then
+            domain="$(awk '$1 == "server_name" { gsub(/;/, "", $2); print $2; exit }' "$nginx_conf_dir/hao-site-${id}.conf" 2>/dev/null)"
+            [ "$domain" = "_" ] && domain=""
+        fi
+        if [ -n "$domain" ]; then
+            details+="${details:+, }${id}(${domain})"
+        else
+            details+="${details:+, }${id}"
+        fi
+    done
+    if [ -n "$details" ]; then
+        printf '站点: %s' "$details"
+    else
+        printf '未部署站点'
+    fi
 }
 
 print_cli_status() {
@@ -2543,6 +2892,8 @@ print_cli_status() {
             "$SVC_NEWAPI")      echo "$(compose_running_text "$(newapi_service_dir)")" ;;
             "$SVC_CLAUDECODE")  echo "$(command -v claude 2>/dev/null || echo unavailable)" ;;
             "$SVC_UV")          echo "$(uv --version 2>/dev/null || echo unavailable)" ;;
+            "$SVC_NODE")        echo "$(/usr/bin/node --version 2>/dev/null || echo unavailable)" ;;
+            "$SVC_SITE")        echo "$(site_status_details)" ;;
         esac
     done
 }
@@ -2553,6 +2904,83 @@ print_hao_inventory() {
     else
         echo "No HAO inventory found at $HAO_STATE_DIR/manifest.json"
     fi
+}
+
+# 发现已部署站点的更新脚本（site 模块生成 /usr/local/bin/hao-site-update-<id>）
+collect_site_update_scripts() {
+    local -n _out="$1"
+    local script
+    _out=()
+    for script in /usr/local/bin/hao-site-update-*; do
+        [ -x "$script" ] || continue
+        _out+=("$script")
+    done
+}
+
+# 只读列出已登记的 secret 资源路径（绝不输出文件内容）
+print_hao_credentials() {
+    local resources_file service ownership path found=0
+    local -a secret_paths=()
+
+    echo "HAO credentials（仅列出凭据文件路径，不显示内容）"
+    echo ""
+    if [ ! -d "$HAO_STATE_DIR/services" ]; then
+        echo "尚未发现 HAO 状态目录（$HAO_STATE_DIR）。"
+        echo "执行 hao apply 部署服务后，生成的凭据文件路径会在此列出。"
+        return 0
+    fi
+    for resources_file in "$HAO_STATE_DIR"/services/*.resources; do
+        [ -f "$resources_file" ] || continue
+        service="$(basename "$resources_file" .resources)"
+        secret_paths=()
+        while IFS=$'\t' read -r ownership _ path; do
+            [ "$ownership" = "secret" ] || continue
+            [ -n "$path" ] || continue
+            secret_paths+=("$path")
+        done < "$resources_file"
+        [ "${#secret_paths[@]}" -eq 0 ] && continue
+        found=1
+        printf '%s:\n' "$service"
+        for path in "${secret_paths[@]}"; do
+            if [ -e "$path" ]; then
+                printf '  %s\n' "$path"
+            else
+                printf '  %s（文件已不存在）\n' "$path"
+            fi
+        done
+    done
+    if [ "$found" -eq 0 ]; then
+        echo "没有已登记的凭据资源。"
+    fi
+}
+
+# 依次执行全部站点更新脚本；任一失败则整体返回非零
+run_site_updates() {
+    local -n _scripts="$1"
+    local script failed=0
+    if [ "${#_scripts[@]}" -eq 0 ]; then
+        echo "未发现已部署的 HAO 站点更新脚本（/usr/local/bin/hao-site-update-*）。"
+        echo "请先使用 hao apply 部署 site 服务（HAO_SITES + HAO_SITE_<ID>_* 配置）。"
+        return 0
+    fi
+    echo "将更新 ${#_scripts[@]} 个站点..."
+    for script in "${_scripts[@]}"; do
+        echo ""
+        log_step "运行 $script ..."
+        if "$script"; then
+            log_success "$script 完成"
+        else
+            log_error "$script 失败（继续执行其余站点）"
+            failed=1
+        fi
+    done
+    echo ""
+    if [ "$failed" -eq 0 ]; then
+        log_success "全部站点更新完成"
+    else
+        log_error "部分站点更新失败，请检查上方日志"
+    fi
+    return "$failed"
 }
 
 run_cli_command() {
@@ -2635,6 +3063,36 @@ run_cli_command() {
             parse_cli_args "$command" "$@"
             print_hao_inventory
             ;;
+        credentials)
+            parse_cli_args "$command" "$@"
+            print_hao_credentials
+            ;;
+        update)
+            parse_cli_args "$command" "$@"
+            local update_script
+            local -a update_scripts=()
+            collect_site_update_scripts update_scripts
+            if [ "$CLI_ASSUME_YES" != "true" ]; then
+                echo "HAO update — 站点更新计划"
+                echo ""
+                if [ "${#update_scripts[@]}" -eq 0 ]; then
+                    echo "未发现已部署的 HAO 站点（/usr/local/bin/hao-site-update-* 不存在）。"
+                else
+                    echo "将依次运行以下站点更新脚本（拉取最新代码 -> 构建/发布或重启 -> 重载 Nginx）:"
+                    for update_script in "${update_scripts[@]}"; do
+                        echo "  - $update_script"
+                    done
+                fi
+                echo ""
+                echo "[ERROR] update 会修改系统，需要显式确认。请追加 --yes，或设置 HAO_CONFIRM_APPLY=yes。" >&2
+                exit 1
+            fi
+            check_root
+            setup_logging "hao-update"
+            if ! run_site_updates update_scripts; then
+                exit 1
+            fi
+            ;;
         *)
             echo "[ERROR] 未知命令: $command" >&2
             cli_usage >&2
@@ -2645,7 +3103,7 @@ run_cli_command() {
 
 # ==================== 执行 ====================
 case "${1:-}" in
-    plan|preflight|apply|status|doctor|inventory|help)
+    plan|preflight|apply|status|doctor|inventory|update|credentials|help)
         run_cli_command "$@"
         ;;
     *)

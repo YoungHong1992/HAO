@@ -56,6 +56,12 @@ printf '== cli-only root ==\n'
 printf '== hidden modules ==\n'
 "$ROOT_DIR/tests/test-hidden-modules.sh"
 
+printf '== node module ==\n'
+"$ROOT_DIR/tests/test-node.sh"
+
+printf '== site module ==\n'
+"$ROOT_DIR/tests/test-site.sh"
+
 printf '== smoke ==\n'
 "$ROOT_DIR/install.sh" --version >/dev/null
 "$ROOT_DIR/install.sh" -h >/dev/null
@@ -63,6 +69,9 @@ printf '== smoke ==\n'
 "$ROOT_DIR/hao" --version >/dev/null
 "$ROOT_DIR/hao" help >/dev/null
 "$ROOT_DIR/hao" plan --services uv >/dev/null
+"$ROOT_DIR/hao" plan --services node >/dev/null
+HAO_SITES=demo HAO_SITE_DEMO_REPO=/tmp/x HAO_SITE_DEMO_TYPE=static "$ROOT_DIR/hao" plan --services site >/dev/null
+"$ROOT_DIR/hao" credentials >/dev/null
 "$ROOT_DIR/hao" status >/dev/null
 "$ROOT_DIR/hao" doctor --services uv >/dev/null
 "$ROOT_DIR/hao" inventory >/dev/null
