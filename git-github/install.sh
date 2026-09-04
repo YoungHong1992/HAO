@@ -45,7 +45,11 @@ so agents use `gh` for GitHub operations instead of raw API calls or tokens.
 
 GitHub authorization is deliberately separate from apply. After installation,
 run `hao-github-authorize` as the target user to complete browser/device login
-with the SSH Git protocol.
+with the SSH Git protocol. With web auth mode, apply only prepares local key
+material: an ed25519 SSH keypair for the target user when none exists (never
+uploaded, never recorded in the manifest). The helper then registers the git
+credential helper and uploads the public key, printing a manual fallback if
+the upload fails.
 EOF
 }
 
@@ -233,6 +237,19 @@ configure_identity() {
     git_config_set hao.identityConfigured true
 }
 
+prepare_ssh_keypair() {
+    [ "${HAO_GH_AUTH_MODE:-web}" = "web" ] || return 0
+    local ssh_dir="$TARGET_HOME/.ssh"
+    if [ -f "$ssh_dir/id_ed25519" ] || [ -f "$ssh_dir/id_rsa" ]; then
+        log_info "目标用户已有 SSH 密钥对，保持不变：$ssh_dir"
+        return 0
+    fi
+    run_as_target mkdir -p "$ssh_dir"
+    run_as_target chmod 700 "$ssh_dir"
+    run_as_target ssh-keygen -t ed25519 -N "" -f "$ssh_dir/id_ed25519" -C "${HAO_GIT_EMAIL}-hao" -q
+    log_success "已为 $TARGET_USER 预生成 SSH 密钥对：$ssh_dir/id_ed25519（空口令；apply 不上传，授权时由 hao-github-authorize 处理）"
+}
+
 git_github_convention_text() {
     cat <<'EOF'
 ## Git / GitHub 操作约定（gh）
@@ -268,13 +285,17 @@ print_result() {
     command -v gh >/dev/null 2>&1 && echo "  gh: $(gh --version | head -1)"
 
     if [ "${HAO_GH_AUTH_MODE:-web}" = "web" ]; then
+        if [ -f "$TARGET_HOME/.ssh/id_ed25519" ] || [ -f "$TARGET_HOME/.ssh/id_rsa" ]; then
+            echo "  ssh_key: 已就绪（$TARGET_HOME/.ssh；私钥不上传、不写入清单）"
+        fi
         if github_authenticated; then
             echo "  GitHub authorization: already configured for $TARGET_USER"
         else
             echo ""
-            echo "User authorization is still required. Run as $TARGET_USER:"
+            echo "用户授权仍需完成，请以 $TARGET_USER 身份运行："
             echo "  hao-github-authorize"
-            echo "The helper uses GitHub web/device login with the SSH Git protocol."
+            echo "辅助脚本将执行 web/设备码登录（附加 admin:public_key 权限）、注册 Git 凭据助手，"
+            echo "并上传已备好的 SSH 公钥；上传失败时会打印人工添加指引（github.com/settings/ssh/new）。"
         fi
     else
         echo "  GitHub authorization: skipped by profile"
@@ -321,5 +342,6 @@ else
 fi
 
 configure_identity
+prepare_ssh_keypair
 write_agent_convention
 print_result

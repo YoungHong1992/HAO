@@ -150,6 +150,10 @@ if [ "${1:-} ${2:-}" = "auth login" ]; then
   printf 'test credential\n' > "$HOME/.config/gh/hosts.yml"
   chmod 644 "$HOME/.config/gh/hosts.yml"
 fi
+if [ "${1:-}" = "ssh-key" ] && [ "${HAO_FAKE_GH_FAIL_SSH_KEY_ADD:-}" = "1" ]; then
+  echo "HTTP 404: Not Found (token lacks admin:public_key scope)" >&2
+  exit 1
+fi
 EOF
   chmod +x "$FAKE_BIN/gh"
   AUTH_HOME="$TMP_DIR/auth-home"
@@ -157,7 +161,24 @@ EOF
   PATH="$FAKE_BIN:$PATH" GH_CALLS="$GH_CALLS" HOME="$AUTH_HOME" \
     "$ROOT_DIR/git-github/authorize.sh" >"$AUTH_OUTPUT" 2>&1
   grep -q 'WARNING: GitHub credentials and SSH keys will belong to root' "$AUTH_OUTPUT"
-  grep -q '^auth login --hostname github.com --web --git-protocol ssh$' "$GH_CALLS"
+  grep -q '^auth login --hostname github.com --web --git-protocol ssh -s admin:public_key$' "$GH_CALLS"
+  grep -q '^auth setup-git --hostname github.com$' "$GH_CALLS"
   grep -q '^auth status --hostname github.com$' "$GH_CALLS"
+  grep -q '^ssh-key add ' "$GH_CALLS"
+  test -f "$AUTH_HOME/.ssh/id_ed25519"
+  test -f "$AUTH_HOME/.ssh/id_ed25519.pub"
   test "$(stat -c '%a' "$AUTH_HOME/.config/gh/hosts.yml")" = "600"
+
+  # A pre-existing keypair must never be overwritten by a re-run.
+  key_hash_before="$(sha256sum "$AUTH_HOME/.ssh/id_ed25519" | cut -d' ' -f1)"
+  PATH="$FAKE_BIN:$PATH" GH_CALLS="$GH_CALLS" HOME="$AUTH_HOME" \
+    "$ROOT_DIR/git-github/authorize.sh" >/dev/null 2>&1
+  test "$(sha256sum "$AUTH_HOME/.ssh/id_ed25519" | cut -d' ' -f1)" = "$key_hash_before"
+
+  # When the token lacks admin:public_key, the manual fallback must be printed.
+  AUTH_FAIL_OUTPUT="$TMP_DIR/auth-fail-output"
+  PATH="$FAKE_BIN:$PATH" GH_CALLS="$GH_CALLS" HOME="$AUTH_HOME" HAO_FAKE_GH_FAIL_SSH_KEY_ADD=1 \
+    "$ROOT_DIR/git-github/authorize.sh" >"$AUTH_FAIL_OUTPUT" 2>&1
+  grep -q 'https://github.com/settings/ssh/new' "$AUTH_FAIL_OUTPUT"
+  grep -qF "$(cat "$AUTH_HOME/.ssh/id_ed25519.pub")" "$AUTH_FAIL_OUTPUT"
 fi

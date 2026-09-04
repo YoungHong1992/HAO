@@ -14,14 +14,63 @@ if ! command -v gh >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "GitHub will open a browser or show a device code."
-echo "Use the intended GitHub account and review the requested permissions."
-gh auth login --hostname github.com --web --git-protocol ssh
+host_name="$(hostname)"
+ssh_dir="$HOME/.ssh"
+key_uploaded=false
+
+echo "GitHub 将打开浏览器或显示一次性设备码（设备码约 15 分钟内有效，请尽快完成）。"
+echo "请使用目标 GitHub 账号登录；附加的 admin:public_key 权限仅用于上传本机 SSH 公钥。"
+gh auth login --hostname github.com --web --git-protocol ssh -s admin:public_key
+
 credential_file="${XDG_CONFIG_HOME:-$HOME/.config}/gh/hosts.yml"
 if [ -f "$credential_file" ]; then
     chmod 600 "$credential_file"
 fi
+
+echo "正在注册 Git 凭据助手（HTTPS 克隆/拉取私有仓库时复用 gh 登录凭据）……"
+gh auth setup-git --hostname github.com
+
+if [ -f "$ssh_dir/id_ed25519" ]; then
+    private_key="$ssh_dir/id_ed25519"
+elif [ -f "$ssh_dir/id_rsa" ]; then
+    private_key="$ssh_dir/id_rsa"
+else
+    mkdir -p "$ssh_dir"
+    chmod 700 "$ssh_dir"
+    private_key="$ssh_dir/id_ed25519"
+    ssh-keygen -t ed25519 -N "" -f "$private_key" -C "$(id -un)@${host_name}-hao" -q
+    echo "已生成新的 SSH 密钥对：$private_key（空口令；私钥不离开本机）"
+fi
+public_key="${private_key}.pub"
+
+key_title="${host_name}-hao-$(date +%Y%m%d)"
+if gh ssh-key add "$public_key" --title "$key_title"; then
+    key_uploaded=true
+    echo "SSH 公钥已上传到 GitHub（标题：$key_title）。"
+else
+    echo >&2
+    echo "公钥自动上传失败（常见原因：登录授权早于本次修复，token 缺少 admin:public_key 权限）。" >&2
+    echo "请改用人工方式添加公钥：" >&2
+    echo "  1. 浏览器打开 https://github.com/settings/ssh/new" >&2
+    echo "  2. Title 填写：$key_title" >&2
+    echo "  3. Key 粘贴下面这一整行公钥（公钥内容可以安全公开）：" >&2
+    cat "$public_key" >&2
+    echo "保存后重新运行本脚本，或执行 ssh -T git@github.com 验证。" >&2
+fi
+
 gh auth status --hostname github.com
 
-echo "GitHub authorization completed. Verify repository access with git fetch/push as appropriate."
-[ -f "$credential_file" ] && echo "Credential file: $credential_file (mode 600; content not displayed)"
+echo "正在验证 SSH 连通性（ssh -T git@github.com；此步失败不影响已完成的登录）……"
+ssh_check_output="$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 || true)"
+if printf '%s' "$ssh_check_output" | grep -q 'successfully authenticated'; then
+    printf 'SSH 验证通过：%s\n' "$(printf '%s' "$ssh_check_output" | head -n 1)"
+elif [ "$key_uploaded" = true ]; then
+    echo "SSH 验证暂未通过：公钥刚上传，可能需要数秒生效；稍后可运行 ssh -T git@github.com 复查。" >&2
+else
+    echo "SSH 验证未通过：请先完成上方的人工公钥添加步骤，再运行 ssh -T git@github.com 复查。" >&2
+fi
+
+echo "GitHub 授权流程结束。可用 git fetch/push 验证仓库访问。"
+if [ -f "$credential_file" ]; then
+    echo "凭据文件：$credential_file（权限 600；内容不显示）"
+fi

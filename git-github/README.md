@@ -26,9 +26,21 @@ sudo ./hao apply --profile git.env --yes
 hao-github-authorize
 ```
 
-`hao-github-authorize` 必须由目标用户运行。它执行 GitHub 官方浏览器/设备码登录，
-选择 SSH 作为 Git 协议，并由 `gh` 检查、选择、生成或上传 SSH 公钥。私钥不会进入 HAO
-profile、日志或状态清单。
+`apply` 不会登录任何 GitHub 账号，但在 `HAO_GH_AUTH_MODE="web"` 且目标用户没有任何
+SSH 密钥对时，会以目标用户身份预生成一对空口令 ed25519 密钥（注释为 `<邮箱>-hao`），
+绝不覆盖已有密钥。私钥不会进入 HAO profile、日志或状态清单。
+
+`hao-github-authorize` 必须由目标用户运行。它执行 GitHub 官方浏览器/设备码登录
+（设备码约 15 分钟内有效），选择 SSH 作为 Git 协议并附加 `admin:public_key` 权限，
+随后依次完成：
+
+1. `gh auth setup-git`：注册 Git 凭据助手，HTTPS 方式克隆/拉取私有仓库时复用 gh 凭据；
+2. 检查 `$HOME/.ssh/id_ed25519`（或 `id_rsa`），不存在则现场生成 ed25519 密钥对；
+3. `gh ssh-key add` 上传公钥，标题为 `<主机名>-hao-<日期>`；若上传失败（例如旧授权
+   的 token 缺少 `admin:public_key` 权限），脚本会打印公钥内容与人工添加指引——
+   打开 <https://github.com/settings/ssh/new> 粘贴即可，适合设备码过期等异步场景；
+4. 最后用 `gh auth status` 和 `ssh -T git@github.com` 验证，未通过会明确提示，不会
+   静默成功。
 
 root-only VPS 可以明确把 `HAO_GIT_TARGET_USER` 设为 `root`。HAO 会显示警告但不阻止：
 此时 `gh` 凭据、Git 全局配置和 SSH Key 都归 root 所有，其他系统用户无法直接复用。
