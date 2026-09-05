@@ -1,7 +1,55 @@
 # Changelog
 
 HAO 通过插件市场分发（`.claude-plugin/marketplace.json`）。
-`plugin.json` 里的 `version` 只是插件打包版本。
+`plugin.json` 里的 `version` 是语义化版本，供插件生态的 semver 校验使用。
+
+## 0.2.0（未发布）—— 收窄范围到运维底座，修掉三个状态相关的缺陷
+
+### 移除
+
+- **`new-api` 与 `cliproxyapi` 两个模块**（含 4 份模板与 `references/images.md`）。
+  这两个是具体第三方应用的部署过程，不属于「通用运维底座」。它们各有自己的
+  初始化流程、默认口令和数据迁移语义，写成通用过程只会给出似是而非的步骤——
+  New-API 上游就在首次启动时创建 `root`/`123456`（`model/main.go` 的
+  `createRootAccountIfNeed`），而原来的过程文档让 agent 汇报「首次访问 Web 界面
+  自行设置管理员」，等于把一个带默认口令的模型网关配好 TLS 挂到公网上。
+  `SKILL.md` 改为给出一张必查清单（默认口令、数据位置、tag 固定、只绑本机），
+  应用本身按上游官方文档装。
+- `assets/readme/*.svg` 三张图：全仓库零引用，且画的是已删除的 CLI。
+
+### 修复
+
+- **多站点状态互相覆盖**：`record` 对一个 service ID 只保留一条记录、且是整体
+  替换，而 `site.md` 让每个站点都记成 `site`。部署第二个站点会让第一个站点的
+  nginx 配置、更新脚本静默从状态里消失，`drift` 从此不再检查它们。改为
+  `record "site-$ID"`，并在 `SKILL.md` / `handoff.md` 写清这条规则。
+- **`handoff` 不重建 `manifest.json`**：`uninstall.md` 的清理流程是「删
+  `services/<svc>.*` 然后 `handoff`」，但 `rebuild_manifest` 只在 `record` 里被调用，
+  清单里会永久留下一个已经不存在的服务。`cmd_handoff` 现在会重建清单。
+- **悬空的 `docs/releasing.md` 引用**（`plugin.json` ×2、`SECURITY.md` ×1）：
+  那份文档描述的是 CLI 时代的不可变发布标识模型，随 CLI 一起没了。改为直接
+  说明当前的分发方式。结构测试新增一条检查，防止 `docs/` 链接再次悬空。
+
+### 文档
+
+- **`SECURITY.md` 重写**：原文整篇描述的是已删除的 CLI（`preflight`、
+  `lib/credentials.sh`、`--admin-password-file`、`HAO_*` profile、`apply`、
+  `/var/log/vps-deploy/`、`/opt/docker-services/<svc>/hao-credentials.txt`）。
+  新版按「哪些由代码强制、哪些是 agent 的行为规则」分开写，并明说散文过程不受
+  CI 保护、构建命令等于任意代码执行。
+- `safety.md` 的密钥规则原文写「永不读取」，但 `claude-code.md` 为了深合并 JSON
+  必须把 token 取出来。规则改为精确表述（值不得进对话/日志/argv），并把那一处
+  标为唯一的、有范本的例外。
+- 修掉 `nginx.md` 第 2 节「三个文件」但表里只有两行；删掉 README / CLAUDE.md /
+  CI 注释里对 UFW 的提及（没有 UFW 模块）；README 里的插件缓存路径原来写死成
+  一个不存在的形状（真实路径带内容哈希）。
+- `docs/cloudflare-dns-guide.md` 的示例子域名改成与现有模块对应的站点。
+
+### 测试
+
+- 新增：`handoff` 重建 manifest（含已删服务不再出现、仍在的服务未被误删、
+  重建后仍是合法 JSON）、多实例 service ID 记录共存、同一 service ID 重记仍是
+  整体替换、`docs/` 引用不悬空。
 
 ## 未发布 —— 转为纯 skill 形式
 

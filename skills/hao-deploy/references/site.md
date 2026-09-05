@@ -249,7 +249,7 @@ openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
 ## 6. 记录状态并交接
 
 ```bash
-"$SKILL/scripts/hao-state.sh" record site installed \
+"$SKILL/scripts/hao-state.sh" record "site-$ID" installed \
     managed:/etc/nginx/conf.d/hao-site-$ID.conf \
     managed:/etc/nginx/hao-site-$ID-body.conf \
     managed:/usr/local/bin/hao-site-update-$ID \
@@ -257,6 +257,12 @@ openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
 # node 类型再加：managed:/etc/systemd/system/hao-site-$ID.service
 "$SKILL/scripts/hao-state.sh" handoff
 ```
+
+**service ID 必须是 `site-$ID` 而不是 `site`。** `record` 对一个 service ID 只保留
+一条记录，是整体替换而不是追加。一台机器上部署第二个站点时，如果两次都记成
+`site`，第一个站点的资源会静默从状态里消失——它的 nginx 配置、更新脚本从此
+不再被 `drift` 检查，`HANDOFF.md` 里也只剩一行。这类丢失通常要等到有人手工改坏
+了那个站点、而 `drift` 一声不响时才被发现。
 
 克隆目录记 `observed` 而不是 `managed`：里面的内容由用户的仓库决定，每次
 更新都会变，记 managed 会让 `drift` 天天误报。
@@ -279,3 +285,5 @@ openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
 - **证书申请失败**：先查 DNS 是否指向本机、80 是否可从公网访问、域名是否被
   另一个 server 块抢走（`hao-guard.sh vhost-owner`）。
 - **重跑一次端口变了**：没有先用 `unit-port` 读回既有端口。
+- **`drift` 不检查某个站点**：那个站点的状态被后来部署的站点覆盖了——两次都记成
+  了 `site` 而不是 `site-<id>`。重跑一次 `record "site-$ID" ...` 补回来。

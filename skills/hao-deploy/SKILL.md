@@ -41,7 +41,7 @@ Ubuntu 26.04/24.04/22.04 LTS，别的系统不要硬上。
 |---|---|
 | 让我的网站/博客上线 | `nginx` + `site`（node 类型再加 `node`） |
 | 我要一台能跑 AI 工具的机器 | `node` + `uv` + `claude-code` |
-| 给我一个模型网关 | `docker` + `nginx` + `new-api` 或 `cliproxyapi` |
+| 我要跑容器化的服务 | `docker`（+ `nginx` 做反代） |
 | 服务器刚买来，先弄安全点 | `maintenance` |
 | 我要在服务器上用 git / GitHub | `git-github` |
 
@@ -80,20 +80,41 @@ reference。**不要替用户猜域名、Git 身份、仓库地址这类东西�
 | `claude-code` | `references/claude-code.md` | Claude Code CLI + 网关/模型配置 |
 | `git-github` | `references/git-github.md` | Git 身份、GitHub CLI、授权助手 |
 | `site` | `references/site.md` | 从 Git 仓库部署静态站或 Node 站，含证书 |
-| `new-api` | `references/new-api.md` | New-API 模型网关（Compose） |
-| `cliproxyapi` | `references/cliproxyapi.md` | CliproxyAPI 网关（Compose） |
 
 另外几份跨模块文档：
 
 - `references/handoff.md` —— 状态记录格式与交接契约（收尾必读）
-- `references/images.md` —— 容器镜像固定 tag，别用 `latest`
 - `references/safety.md` —— 完整安全契约
 - `references/uninstall.md` —— 卸载流程。**只在用户明确要求时才读它**
 
 配置文件内容全部在 `templates/`，把 `@@TOKEN@@` 换成实际值再写入。
 **模板是内容的权威来源**，里面每一行都有原因，不要自己重写一份"差不多的"。
-含密钥的模板（compose、config.yaml）必须用 `hao-secret.sh render` 渲染，
+现有模板都不含密钥；一旦要写入含密钥的配置，用 `hao-secret.sh render` 渲染，
 不要自己读出密钥再拼进去。
+
+### 不在本 skill 范围内的事
+
+HAO 只装**通用的运维底座**：Web 服务器、运行时、容器引擎、基础加固，以及从
+用户自己的 Git 仓库部署站点。**具体第三方应用的部署过程不在这里**（模型网关、
+论坛、面板这类）——它们各有自己的初始化流程、默认口令和数据迁移语义，
+写成通用过程只会给出似是而非的步骤。
+
+用户要装某个具体应用时：照 `docker` + `nginx` 打好底座，然后**按上游官方文档
+部署**，并把这几件事当成必查项：
+
+- 上游有没有**默认管理员口令**？有就必须在暴露到公网之前改掉，
+  并在汇报里单独说这一条。
+- 配置文件或 compose 里要填密码？用 `hao-secret.sh write` 生成、
+  `hao-secret.sh render` 注入（模板里写 `@@KEY@@`），别把值读出来拼进去。
+- 数据在哪（bind mount 还是 named volume）？销毁机器前要导出什么？
+- 镜像 tag 别用 `latest`，让用户去上游 releases 挑一个固定 tag——
+  否则同一份步骤两周后装出来的东西不一样。部署前用
+  `docker manifest inspect <image>:<tag>` 确认 tag 还在，拉不到就停下来问用户，
+  不要默默换一个。
+- 容器端口一律绑 `127.0.0.1`，对外只走 Nginx 反代。
+
+反代和证书照 `references/site.md` 第 4 节做，`@@SITE_ID@@` 用服务名。
+收尾同样要 `hao-state.sh record` + `handoff`。
 
 ### 5. 验证
 
@@ -116,6 +137,11 @@ reference。**不要替用户猜域名、Git 身份、仓库地址这类东西�
 这一步是整个 skill 存在的理由之一：机器和会话都是即用即抛的，只有主机上的
 记录能让下一个 agent 接手。归属类别怎么选、交接文档写了什么，
 见 `references/handoff.md`。
+
+**一个 service ID 只有一条记录**，`record` 是整体替换而不是追加。所以同一模块
+可以部署多份的东西（站点就是），service ID 必须带上实例标识：`site-blog`、
+`site-shop`，而不是都记成 `site`——都记成 `site` 会让先部署的那个静默从状态里
+消失，之后 `drift` 再也不检查它。
 
 ## 三个必须走脚本的地方
 

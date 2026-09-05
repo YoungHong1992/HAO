@@ -33,7 +33,7 @@
 | 字段 | 值 | 说明 |
 |------|-----|------|
 | Type | `A` | IPv4 地址记录 |
-| Name | `newapi` | 子域名前缀（最终为 `newapi.example.com`） |
+| Name | `blog` | 子域名前缀（最终为 `blog.example.com`） |
 | IPv4 address | `1.2.3.4` | 你的 VPS 服务器 IP |
 | Proxy status | **DNS only** (灰色云朵) | 见下方说明 |
 | TTL | `Auto` | 自动管理 |
@@ -41,9 +41,8 @@
 常见子域名配置示例：
 
 ```
-newapi.example.com  → A → VPS_IP  (New-API)
-api.example.com     → A → VPS_IP  (CliproxyAPI)
-proxy.example.com   → A → VPS_IP  (网络工具)
+blog.example.com  → A → VPS_IP  (静态站)
+app.example.com   → A → VPS_IP  (Node 站)
 ```
 
 ---
@@ -71,7 +70,7 @@ proxy.example.com   → A → VPS_IP  (网络工具)
 
 ```bash
 # 检查解析是否生效
-dig +short newapi.example.com
+dig +short blog.example.com
 
 # 应返回你的 VPS IP，例如：
 # 1.2.3.4

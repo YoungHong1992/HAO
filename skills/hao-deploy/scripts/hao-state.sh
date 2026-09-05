@@ -372,6 +372,10 @@ cmd_handoff() {
     id "$owner" >/dev/null 2>&1 || die "用户不存在: $owner"
 
     init_state
+    # 每次 handoff 都重建 manifest：卸载流程会直接删 services/<svc>.json
+    # （见 references/uninstall.md），只有在这里重建才能让 manifest 不留下
+    # 已经不存在的服务。下一个 agent 读到幻影服务会拒绝操作或误覆盖。
+    rebuild_manifest
     local handoff="$HAO_STATE_DIR/HANDOFF.md"
     local tmp
     tmp="$(mktemp "${handoff}.tmp.XXXXXX")"

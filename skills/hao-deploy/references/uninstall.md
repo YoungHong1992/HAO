@@ -16,7 +16,7 @@ cat /var/lib/hao/manifest.json
 把清单里对应服务的资源路径念给用户听，确认哪些要删、哪些要留。
 `shared` 和 `observed` 的资源**不要删**——它们不属于 HAO。
 
-## Docker 类服务（new-api / cliproxyapi）
+## Docker Compose 类服务
 
 ```bash
 cd /opt/docker-services/<service>
@@ -24,8 +24,8 @@ docker compose ps                 # 先看当前状态
 docker compose down               # 停止并移除容器（不动 volume）
 ```
 
-**volume 是数据所在。** `docker compose down -v` 会删掉数据库和 Redis 的
-volume，数据不可恢复。执行前：
+**volume 是数据所在。** `docker compose down -v` 会删掉数据库这类 named volume，
+数据不可恢复。执行前：
 
 1. 明确告诉用户"这一步会删掉数据库数据"；
 2. 主动提议先备份：
@@ -39,7 +39,7 @@ volume，数据不可恢复。执行前：
 然后按需删除服务目录与 Nginx 配置：
 
 ```bash
-rm -rf /opt/docker-services/<service>          # 含 config.yaml，里面有密钥
+rm -rf /opt/docker-services/<service>          # 里面可能有含密钥的配置文件
 rm -f /etc/nginx/conf.d/hao-<service>.conf /etc/nginx/hao-<service>-body.conf
 nginx -t && systemctl reload nginx             # 先测试再重载
 ```
@@ -57,6 +57,8 @@ nginx -t && systemctl reload nginx
 
 `/opt/hao-sites/<id>`（代码）和 `/var/www/hao-sites/<id>`（发布产物）
 **要单独问**：代码目录可能有用户没推上去的改动。
+
+站点的状态记录在 `site-<id>` 下（每个站点一条），不是统一的 `site`。
 
 ## 基础模块（手工反向操作）
 
@@ -81,6 +83,9 @@ nginx -t && systemctl reload nginx
 rm -f /var/lib/hao/services/<service>.json /var/lib/hao/services/<service>.resources
 "$SKILL/scripts/hao-state.sh" handoff        # 重建 manifest 与交接文档
 ```
+
+`handoff` 会同时重建 `manifest.json`，所以删完 `services/` 下的文件必须跑一次，
+否则清单里会留下一个已经不存在的服务。站点的文件名是 `site-<id>.*`。
 
 状态和现实不一致的两种后果都很烦：
 清单里留着已删的服务 → `drift` 一直报缺失；

@@ -36,9 +36,9 @@ server {
     server_name blog.example.com;
 }
 EOF
-cat > "$WORK/confd/hao-newapi.conf" <<'EOF'
+cat > "$WORK/confd/hao-other.conf" <<'EOF'
 # Managed by HAO
-# Service: new-api
+# Service: some-other-service
 server {
     listen 80;
     server_name api.example.com;
@@ -53,7 +53,7 @@ check "vhost-owner HAO site 占用" \
     "hao-site blog $WORK/confd/hao-site-blog.conf" \
     "$("$GUARD" vhost-owner blog.example.com "$WORK/confd")"
 check "vhost-owner 其他 HAO 服务占用" \
-    "hao new-api $WORK/confd/hao-newapi.conf" \
+    "hao some-other-service $WORK/confd/hao-other.conf" \
     "$("$GUARD" vhost-owner api.example.com "$WORK/confd")"
 # 子串不得误命中：blog.example 是 blog.example.com 的前缀
 check "vhost-owner 子串不误命中" \

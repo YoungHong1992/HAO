@@ -44,9 +44,9 @@ follows a procedure in `references/` and the user has confirmed.
   install"), carrying the non-obvious operational knowledge: exact commands, ordering
   constraints, refusal conditions, and the reasons behind them. This is where the old
   installer scripts went. Cross-module docs: `handoff.md` (state format and the handoff
-  contract), `safety.md`, `images.md` (pinned image tags), `uninstall.md`.
+  contract), `safety.md`, `uninstall.md`.
 - **`templates/`** — the authoritative content for every file written to a host
-  (nginx configs, systemd units, compose files, generated update scripts). Tokens are
+  (nginx configs, systemd units, generated update scripts). Tokens are
   `@@NAME@@`. Templates carrying secrets are rendered with `hao-secret.sh render`, never
   by reading a secret and interpolating it. Shared fragments (`hao-ssl-params.conf`,
   `hao-acme-location.conf`, per-site body files) are written once and `include`d rather
@@ -64,10 +64,22 @@ follows a procedure in `references/` and the user has confirmed.
     `unit-port`, `os-supported`).
 - **Runtime state on a deployed host**: `/var/lib/hao/` (`HANDOFF.md`,
   `manifest.json` schema_version 1, `services/<svc>.json` + `.resources`).
+  `record` **replaces** a service ID's entry rather than appending, so anything a module
+  can deploy more than once must carry an instance suffix in its service ID
+  (`site-blog`, not `site`) — otherwise the earlier instance silently drops out of
+  `drift`. `handoff` rebuilds `manifest.json`, which is what makes the uninstall flow
+  (delete `services/<svc>.*`, then `handoff`) leave a consistent manifest.
 - **Ownership classes** (`managed` / `shared` / `observed` / `secret`) decide what a
   later agent may do to a resource. Choosing wrong has concrete costs: marking a user's
   code directory `managed` makes `drift` report false positives forever; marking
   someone else's config `managed` invites a future agent to overwrite it.
+- **Scope boundary**: HAO installs the generic ops substrate (web server, runtimes,
+  container engine, hardening) and deploys sites from the user's own Git repo. Procedures
+  for specific third-party applications are deliberately **out of scope** — they each
+  have their own bootstrap flow, default credentials and data-migration semantics, so a
+  generic procedure produces plausible-looking wrong steps. `SKILL.md` has a checklist
+  for the agent to apply when a user asks for one (default admin password, data
+  location, tag pinning, loopback binding).
 
 ## Hard constraints
 
@@ -91,7 +103,7 @@ follows a procedure in `references/` and the user has confirmed.
   paragraph. After changing a `references/` procedure, verify it on a throwaway Ubuntu VM.
 - **Acceptance runs on Ubuntu only.** Debian 13/12 stay in the supported matrix but
   are not a release gate — GitHub-hosted runners have no Debian images, and containers
-  can't exercise systemd/Docker/UFW realistically.
+  can't exercise systemd/Docker realistically.
 
 ## Adding a module
 
