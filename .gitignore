@@ -16,9 +16,8 @@ Thumbs.db
 *.log
 /var/log/vps-deploy/
 
-# Generated release metadata (included in release archives only)
-/RELEASE
-/build-info.json
+# 本地部署配置（可能含配置值或密钥，不入库）
+/deploy.env
 
 # ShellCheck
 *.shellcheck

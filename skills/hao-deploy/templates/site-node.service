@@ -1,0 +1,35 @@
+# Managed by HAO
+# Service: site
+# HAO-SITE: @@SITE_ID@@
+# 目标路径: /etc/systemd/system/hao-site-@@SITE_ID@@.service
+# 权限必须是 0640：@@EXTRA_ENV@@ 可能带敏感值，不能让普通用户读到。
+# systemd 以 root 运行，0640 不影响它读取。
+# 写入后: systemctl daemon-reload && systemctl enable --now hao-site-@@SITE_ID@@.service
+#
+# @@EXTRA_ENV@@ 是可选的额外环境变量，每行一条 Environment="KEY=VALUE"，
+# 放在 PORT 之后，因此同名时用户值覆盖默认值。不要在这里设 PORT。
+[Unit]
+Description=HAO Site: @@SITE_ID@@ (node)
+After=network.target
+
+[Service]
+Type=simple
+User=@@TARGET_USER@@
+WorkingDirectory=/opt/hao-sites/@@SITE_ID@@
+ExecStart=@@NODE_BIN@@ @@START_FILE@@ @@PORT@@
+Restart=always
+RestartSec=10s
+
+Environment="NODE_ENV=production"
+Environment="HOME=@@TARGET_HOME@@"
+Environment="PORT=@@PORT@@"
+@@EXTRA_ENV@@
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

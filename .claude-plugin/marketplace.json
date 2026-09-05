@@ -1,0 +1,25 @@
+{
+  "name": "hao",
+  "owner": {
+    "name": "YoungHong1992",
+    "url": "https://github.com/YoungHong1992"
+  },
+  "metadata": {
+    "description": "HAO (HongAgentOps) —— AI agent 驱动的服务器部署工具集"
+  },
+  "plugins": [
+    {
+      "name": "hao-deploy",
+      "source": "./",
+      "description": "在 Debian/Ubuntu 服务器上部署网站与开发运维工具。面向小白用户，agent 负责检查、部署、验证，并在主机上留下交接契约。⚠️ 会以 root 修改目标主机，请在目标服务器上使用。",
+      "category": "devops",
+      "tags": [
+        "deployment",
+        "nginx",
+        "vps",
+        "static-site",
+        "letsencrypt"
+      ]
+    }
+  ]
+}

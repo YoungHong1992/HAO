@@ -4,46 +4,103 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-HAO (HongAgentOps) is a pure-Bash, zero-dependency deployment toolkit for Debian/Ubuntu VPS hosts, designed to be driven by AI agents through a deterministic `plan → preflight → apply → status/doctor` CLI workflow instead of interactive terminal menus. Docs and code comments are largely in Chinese.
+HAO (HongAgentOps) is an **AI agent skill** for deploying websites and dev/ops tooling
+on Debian/Ubuntu servers, aimed at users who don't know operations. It is not a CLI
+toolkit: the deployment procedures live as prose in `skills/hao-deploy/references/`
+and are executed by the agent itself. Docs and comments are largely in Chinese.
+
+The repository doubles as a Claude Code **plugin** (`.claude-plugin/`), so the whole
+repo is the distribution unit.
 
 ## Commands
 
 ```bash
-# Full test suite: bash -n syntax check, shellcheck, unit tests, CLI smoke tests
-./tests/run.sh                      # requires shellcheck installed (apt-get install -y shellcheck)
+# Full suite: bash -n, shellcheck, structure test, behavior tests, plugin validation
+./tests/run.sh                      # requires shellcheck (apt-get install -y shellcheck)
 
-# Run a single test
-./tests/test-cli-profile.sh
-./tests/test-credentials.sh
+# Individual suites
+./tests/test-skill-structure.sh     # frontmatter, dangling refs, template hygiene
+./tests/test-guard.sh               # hao-guard.sh behavior (read-only checks)
+./tests/test-secret.sh              # credential generation, reuse, render
+./tests/test-state.sh               # state records, drift, handoff, marker blocks
 
-# Manual lint of one file (CI uses these exact flags)
+# Lint one file (CI uses these exact flags)
 shellcheck -x -S warning path/to/script.sh
 
-# CLI smoke checks (safe, read-only)
-./hao plan --services new-api --domain api.example.com
-./hao preflight --profile deploy.env
-./hao status
-
-# Real-install idempotency test — MODIFIES THE MACHINE, only run in CI/throwaway VMs
-sudo ./tests/test-maintenance-idempotency.sh
+# Plugin
+claude plugin validate . --strict
+claude --plugin-dir . -p "..."      # load the skill locally to try it
 ```
 
-There is no build step. `apply` only mutates the system when given `--yes` (or `HAO_CONFIRM_APPLY=yes`) and root.
+There is no build step and no installer. The skill mutates a host only when an agent
+follows a procedure in `references/` and the user has confirmed.
 
 ## Architecture
 
-- **`hao`** is a 5-line wrapper that `exec`s **`install.sh`** — the single ~2600-line CLI executor. It contains all command dispatch (`plan|preflight|apply|status|doctor|inventory|help` case at the bottom), profile parsing (`load_profile_file`, `parse_cli_args`), dependency resolution (`resolve_deps`), preflight checks, and the `run_install` orchestrator. It also doubles as the remote bootstrap entry (`curl | bash` downloads the full repo, shows help only).
-- **Component directories** (`maintenance/`, `nginx/`, `docker/`, `cliproxyapi/`, `new-api/`, `git-github/`, `claude-code/`, `uv/`) each expose a uniformly named `install.sh` that `hao apply` calls non-interactively. CPA and New-API deploy via Docker Compose by default (`docker-compose.yml` in the dir); CPA supports bare-metal via `HAO_CLIPROXY_MODE=bare`. `claude-code/` is the template for "tool configuration" modules (install a CLI + write user-level config from `HAO_CC_*` vars). `uv/` installs the uv Python manager and writes a managed convention block into detected AI-assistant instruction files.
-- **`lib/`** holds shared helpers: `common.sh` (logging, OS/port/domain validation, SSL via acme.sh, nginx conf discovery), `crypto.sh` (secret generation), `credentials.sh` (atomic 0600 credential-file writes), `agent-convention.sh` (detect installed AI assistants and write managed marker-block conventions into their instruction files — used by `uv/` and `git-github/`). Only components that write credentials (new-api, cliproxyapi) source these via `$HAO_REPO_DIR/lib/...`; base scripts (maintenance, nginx, docker) are intentionally self-contained so they can be run standalone. Note `install.sh` duplicates many `common.sh` helpers rather than sourcing it — keep them in sync when changing shared behavior.
-- **Configuration** flows through `HAO_*` environment variables, either from a `deploy.env` profile (`--profile`) or CLI flags. Per-service variables use the `service_env_prefix` mapping (e.g. `HAO_NEWAPI_DOMAIN`, `HAO_CLIPROXY_DOMAIN`).
-- **Runtime state**: install markers under `/var/lib/hao/`, logs under `/var/log/vps-deploy/`.
-- **`skills/hao-deploy/`** is a distributable AI-agent skill wrapping the same CLI; its safety contract (confirm before `apply`, never print secret values, report credential file paths only) applies to work in this repo too. `AGENTS.md` at the repo root is the entry point for consumer agents.
-- **Adding a module**: follow `docs/adding-a-module.md` — it lists every registration point in the root `install.sh` (service constants, detection, aliases, plan/status output, completeness checks) plus packaging and skill-reference updates.
+- **`skills/hao-deploy/SKILL.md`** is the entry point: intent→module mapping, the
+  six-step workflow (ask → read-only checks → explain and confirm → execute per
+  reference → verify with real evidence → record state and hand off), and the hard rules.
+- **`references/<module>.md`** — one procedure per module ("how to check, how to
+  install"), carrying the non-obvious operational knowledge: exact commands, ordering
+  constraints, refusal conditions, and the reasons behind them. This is where the old
+  installer scripts went. Cross-module docs: `handoff.md` (state format and the handoff
+  contract), `safety.md`, `images.md` (pinned image tags), `uninstall.md`.
+- **`templates/`** — the authoritative content for every file written to a host
+  (nginx configs, systemd units, compose files, generated update scripts). Tokens are
+  `@@NAME@@`. Templates carrying secrets are rendered with `hao-secret.sh render`, never
+  by reading a secret and interpolating it. Shared fragments (`hao-ssl-params.conf`,
+  `hao-acme-location.conf`, per-site body files) are written once and `include`d rather
+  than duplicated into each server block.
+- **`scripts/`** — only three things stay deterministic, because improvising them
+  breaks a guarantee:
+  - `hao-secret.sh` — generates/reuses/injects credentials so values never enter the
+    transcript. Reuses existing keys by default (that is the idempotency guarantee);
+    refuses command-line literals because argv is world-readable via `/proc`.
+  - `hao-state.sh` — writes `/var/lib/hao` state, computes drift, generates
+    `HANDOFF.md`, and writes marker-block conventions into detected AI-assistant
+    instruction files. The next agent must be able to *trust* this format.
+  - `hao-guard.sh` — read-only ownership checks before overwriting anything
+    (`vhost-owner`, `managed-file`, `cert-issuer`, `repo-identity`, `port-free`,
+    `unit-port`, `os-supported`).
+- **Runtime state on a deployed host**: `/var/lib/hao/` (`HANDOFF.md`,
+  `manifest.json` schema_version 1, `services/<svc>.json` + `.resources`).
+- **Ownership classes** (`managed` / `shared` / `observed` / `secret`) decide what a
+  later agent may do to a resource. Choosing wrong has concrete costs: marking a user's
+  code directory `managed` makes `drift` report false positives forever; marking
+  someone else's config `managed` invites a future agent to overwrite it.
 
 ## Hard constraints
 
-- **Hidden modules exist.** `tests/test-hidden-modules.sh` enforces that certain in-repo directories are never referenced from public files (any `*.md`, `*.sh`, `*.yml` outside those directories and `tests/`) and stay out of the release tarball. Read that test to see the protected names — do not write them anywhere else, including this file. CI runs the check.
-- All scripts must pass `bash -n` and `shellcheck -x -S warning` — CI checks every `*.sh` in the repo.
-- Never log or echo secret values; use `lib/credentials.sh` helpers and log only the credential file path.
-- Installers must stay idempotent (re-running must be safe) and non-interactive when invoked through `hao apply`.
-- **Acceptance and integration testing run on Ubuntu only.** Debian 13/12 stay in the supported-OS matrix (`is_supported_os_release`, `preflight`), but do not add Debian jobs to CI, run Debian acceptance tests, or treat Debian acceptance as a release gate — GitHub-hosted runners have no Debian images, and containers can't exercise systemd/Docker/UFW realistically. See `docs/releasing.md`.
+- **Hidden modules exist.** `tests/test-hidden-modules.sh` enforces that certain
+  in-repo directories are never referenced from any public file (`*.md`, `*.sh`,
+  `*.yml`, `*.yaml`, `*.json` outside those directories and `tests/`). Read that test
+  to see the protected names — do not write them anywhere else, including this file.
+  Those directories are self-contained and must not be given a `references/` doc.
+- **The skill must stay runtime-neutral.** `tests/test-generic-skills.sh` forbids
+  writing the skill for one specific agent runtime. Agent-instruction-file detection
+  goes by *file convention* (existing `AGENTS.md` / `CLAUDE.md` under dot-directories)
+  plus a `--agent-file` override, not by naming products.
+- All scripts must pass `bash -n` and `shellcheck -x -S warning`. Files under
+  `templates/` that are shell scripts must end in `.sh.tmpl`, not `.sh`, or CI's glob
+  will lint their `@@TOKEN@@` placeholders and fail.
+- **Never log or echo secret values.** Use `hao-secret.sh`; report only file paths.
+- Procedures must stay idempotent (re-running must be safe) and must refuse rather
+  than overwrite anything not owned by HAO.
+- **What the tests do and don't cover**: script behavior and skill structure are
+  tested; the *correctness of the prose procedures* is not — you cannot shellcheck a
+  paragraph. After changing a `references/` procedure, verify it on a throwaway Ubuntu VM.
+- **Acceptance runs on Ubuntu only.** Debian 13/12 stay in the supported matrix but
+  are not a release gate — GitHub-hosted runners have no Debian images, and containers
+  can't exercise systemd/Docker/UFW realistically.
+
+## Adding a module
+
+1. Write `skills/hao-deploy/references/<module>.md` following the shape of an existing
+   one: read-only checks first (with explicit refusal conditions), then install steps,
+   then verification with real evidence, then `hao-state.sh record` + `handoff`, then
+   common failures.
+2. Add any host-written file to `templates/` with a `# Managed by HAO` +
+   `# Service: <module>` header — `hao-guard.sh managed-file` depends on that header.
+3. Add the module to the table in `SKILL.md` (an unreferenced reference fails the
+   structure test).
+4. Run `./tests/run.sh`, then verify on a throwaway Ubuntu VM.

@@ -117,4 +117,24 @@ dig +short your-domain.com
 
 ---
 
-**最后更新**: 2026-02-23
+## 配合 HAO site 组件
+
+用 `site` 组件部署的站点如果要开启 Cloudflare 橙云代理（Proxied），按以下顺序操作：
+
+1. **申请证书时保持灰云（DNS only）**：`site` 通过 acme.sh webroot 申请 Let's Encrypt 证书，需要 CA 直接访问源站 80 端口；签发成功后再切回橙云。
+2. **SSL/TLS 模式设为 Full (strict)**：橙云回源走 HTTPS，源站持有真实证书时选择 **SSL/TLS → Full (strict)**；不要选 Flexible——HTTP 回源会与源站的 80→443 跳转形成循环。
+3. **源站安全组放行 443/TCP**：`site` 默认开启 80→443 跳转（`HAO_SITE_<ID>_REDIRECT=yes`）。Full (strict) 回源要求源站 443 可达，安全组未放行时整站表现为 522 超时。
+
+何时使用 `HAO_SITE_<ID>_REDIRECT=no`：
+
+- 源站安全组暂时不能放行 443，需要 80 端口直接提供站点内容；
+- 使用自签名证书或不申请证书（此时模块本就不会跳转，`REDIRECT=no` 只是显式声明）；
+- 调试阶段需要绕过 HTTPS 直接验证源站。
+
+> 橙云（代理开启）模式下 `dig` / `getent hosts` 返回的是 Cloudflare 边缘节点 IP
+> 而非源站 IP。此时 skill 的「域名解析是否指向本机」检查会对不上，这是预期现象，
+> 不代表 DNS 配错了。证书申请仍可正常完成（走 80 端口的 ACME HTTP 校验）。
+
+---
+
+**最后更新**: 2026-09-04
