@@ -1,0 +1,17 @@
+# Managed by HAO
+# Service: maintenance
+# 目标路径: /etc/fail2ban/jail.d/hao-sshd.local
+#
+# @@SSH_PORTS@@ 必须是这台机器**实际**的 SSH 端口，不能写死 22。
+# 探测顺序（前者更可靠，它读的是 sshd 的最终生效配置）：
+#   sshd -T 2>/dev/null | awk '$1 == "port" {print $2}' | sort -n -u | paste -sd, -
+# 探测不到再退回读配置文件（含 sshd_config.d/*.conf），最后兜底 22。
+# 端口写错会导致防护形同虚设，或者把你自己关在门外。
+[sshd]
+enabled = true
+port = @@SSH_PORTS@@
+filter = sshd
+backend = systemd
+maxretry = 5
+findtime = 10m
+bantime = 1h

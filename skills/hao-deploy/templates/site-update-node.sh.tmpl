@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Managed by HAO
+# Service: site
+# HAO-SITE: @@SITE_ID@@
+# 目标路径: /usr/local/bin/hao-site-update-@@SITE_ID@@ （权限 0755）
+#
+# node 站点更新脚本：拉取最新代码 -> 重启服务 -> 等端口就绪 -> 重载 Nginx。
+# 脚本内嵌所有解析后的字面量，不依赖 HAO skill 或本仓库，可独立运行。
+#
+# 生成时的注意事项：值里若含单引号，必须写成 '\'' 转义形式。
+set -euo pipefail
+
+SITE_ID='@@SITE_ID@@'
+CLONE_DIR='/opt/hao-sites/@@SITE_ID@@'
+BRANCH='@@BRANCH@@'
+TARGET_USER='@@TARGET_USER@@'
+TARGET_HOME='@@TARGET_HOME@@'
+UNIT_NAME='hao-site-@@SITE_ID@@.service'
+PORT='@@PORT@@'
+
+log() { printf '[hao-site-update-%s] %s\n' "$SITE_ID" "$*"; }
+
+if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+    echo "[ERROR] 请使用 root 权限运行: sudo hao-site-update-$SITE_ID" >&2
+    exit 1
+fi
+
+command -v git >/dev/null 2>&1 || { echo "[ERROR] 未找到 git 命令。" >&2; exit 1; }
+
+run_as_target() {
+    if [ "$TARGET_USER" = "$(id -un)" ]; then
+        env HOME="$TARGET_HOME" "$@"
+    else
+        runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" "$@"
+    fi
+}
+
+log "拉取最新代码（分支 $BRANCH）..."
+run_as_target git -C "$CLONE_DIR" fetch --prune origin
+run_as_target git -C "$CLONE_DIR" checkout -f -B "$BRANCH" "origin/$BRANCH"
+run_as_target git -C "$CLONE_DIR" reset --hard "origin/$BRANCH"
+
+log "重启服务 $UNIT_NAME ..."
+systemctl restart "$UNIT_NAME"
+
+log "等待端口 $PORT 就绪..."
+ready=0
+for _ in $(seq 1 15); do
+    if timeout 2 bash -c ">/dev/tcp/127.0.0.1/$PORT" 2>/dev/null; then
+        ready=1
+        break
+    fi
+    sleep 2
+done
+if [ "$ready" != "1" ]; then
+    echo "[ERROR] 服务未监听端口 $PORT，请检查: journalctl -u $UNIT_NAME -n 50" >&2
+    exit 1
+fi
+
+log "重载 Nginx ..."
+if ! systemctl reload nginx 2>/dev/null; then
+    log "Nginx 未在运行或重载失败，已跳过（配置将在 Nginx 下次启动时生效）"
+fi
+log "完成。"

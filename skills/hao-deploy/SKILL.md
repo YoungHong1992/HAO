@@ -1,98 +1,151 @@
 ---
 name: hao-deploy
-description: AI-assisted deployment of HAO (HongAgentOps) services and tools on Debian or Ubuntu hosts. Use when an AI agent needs to plan, preflight, apply, inspect, or troubleshoot Maintenance, Nginx, Docker, Git/GitHub, CliproxyAPI, New-API, Claude Code, uv, Node.js, or git-based multi-site (site) deployments using the repository's hao CLI and profile-driven workflow.
+description: 在一台 Debian/Ubuntu 服务器上部署网站和开发运维工具，面向不懂运维的用户。当用户想把自己的 Git 仓库变成能访问的网站、想在 VPS 上装 Nginx/Docker/Node 等工具、想更新或排查已部署的站点、或者接手一台别人（或以前的自己）部署过的服务器时使用。部署完成后会在主机上留下交接记录，任何后续 agent 都能照规则接手。
+when_to_use: 用户说"帮我把这个仓库部署上线""在服务器上装个 nginx""我的站点打不开了""这台机器上装了什么""接手一下这台服务器"时触发。也适用于用户刚买了一台 VPS、想搭一个能干活或学习的环境。
+allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/hao-guard.sh *) Bash(${CLAUDE_SKILL_DIR}/scripts/hao-state.sh *) Bash(${CLAUDE_SKILL_DIR}/scripts/hao-secret.sh *)
 ---
 
-# HAO Deploy
+# HAO 部署
 
-## Workflow
+把一台干净的 Debian/Ubuntu 服务器变成能用的东西：一个上线的网站，或者一台能
+干活、能学习的机器。用户通常不懂运维，**你是执行者**，他只负责回答问题和拍板。
 
-Use HAO as a deterministic executor, not as a chatty terminal menu. Keep all human interaction in the agent conversation, then call `hao` with explicit arguments or a generated `.env` profile.
-
-1. Clarify the target service set, access mode, domains/IPs, database choice, and deployment mode.
-2. Generate or inspect a profile with non-secret deployment choices.
-3. Run `plan` and explain the planned system changes to the user.
-4. Run `preflight` and address failures before installation.
-5. Run `apply` only after explicit user confirmation, passing `--yes`.
-6. Run `status` or `doctor` after deployment and summarize results.
-7. Run `inventory` to report which resources are managed, shared, observed, or secret.
-
-For `git-github`, ask the user for the exact Git name, Git email, target OS user,
-machine role (`workstation` or `server`), configuration scope, and GitHub auth
-mode. Do not infer any of these values from the host, repository, or GitHub account.
-
-Never print secret values. If a password is supplied, refer to it as provided/hidden. Prefer generated credentials and report the credential file path after deployment.
-
-HAO records ownership under `/var/lib/hao`. Preserve untracked resources by default.
-If `doctor` reports drift in a managed resource, stop and explain the difference;
-do not overwrite it without explicit user review.
-
-## Commands
-
-Use `scripts/hao-run.sh` to invoke the repo-local CLI from any working directory:
+开始前先记下 skill 目录，后面所有脚本和模板都在这里：
 
 ```bash
-./scripts/hao-run.sh plan --profile deploy.env
-./scripts/hao-run.sh preflight --profile deploy.env
-sudo ./scripts/hao-run.sh apply --profile deploy.env --yes
-./scripts/hao-run.sh status
-./scripts/hao-run.sh doctor --profile deploy.env
-./scripts/hao-run.sh inventory
+SKILL="${CLAUDE_SKILL_DIR}"
 ```
 
-If the script cannot find the repository, set `HAO_REPO_DIR=/path/to/hao`.
+## 前提：你必须在目标服务器上
 
-## Installation
-
-To install this skill into an agent runtime's skill directory, run `scripts/install-skill.sh` from a full clone of the repository:
+`hao-deploy` 的所有操作都是本机操作。确认一下你在哪：
 
 ```bash
-./scripts/install-skill.sh                       # Claude Code: ~/.claude/skills/hao-deploy (symlink)
-./scripts/install-skill.sh --dir /path/to/skills # other runtimes
-./scripts/install-skill.sh --copy                # copy instead of symlink; set HAO_REPO_DIR afterwards
+hostname; "$SKILL/scripts/hao-guard.sh" os-supported; id -u
 ```
 
-Symlink installs track the repository: `git pull` updates the skill. Installation is optional — an agent can also just read this file and `references/` from the clone.
+如果这是用户自己的笔记本、而要部署的是一台远程 VPS，**先停下来**告诉用户：
+需要先 `ssh` 到那台服务器、在服务器上启动 Claude Code，再让我干活。
+在笔记本上跑这套流程只会把笔记本改坏。
 
-## Profile
+`os-supported` 返回 `unsupported` 也停下来：支持 Debian 13/12 与
+Ubuntu 26.04/24.04/22.04 LTS，别的系统不要硬上。
 
-Use `.env` profiles for repeatable AI-generated deployments:
+## 工作流程
+
+### 1. 先弄清用户到底要什么
+
+用户说的是目标（"我想让我的博客上线"），不是服务清单。你负责翻译：
+
+| 用户想要 | 实际需要 |
+|---|---|
+| 让我的网站/博客上线 | `nginx` + `site`（node 类型再加 `node`） |
+| 我要一台能跑 AI 工具的机器 | `node` + `uv` + `claude-code` |
+| 给我一个模型网关 | `docker` + `nginx` + `new-api` 或 `cliproxyapi` |
+| 服务器刚买来，先弄安全点 | `maintenance` |
+| 我要在服务器上用 git / GitHub | `git-github` |
+
+问清缺失的关键信息，一次问完，不要来回挤牙膏。各模块要问什么，看对应的
+reference。**不要替用户猜域名、Git 身份、仓库地址这类东西。**
+
+### 2. 只读检查
+
+动手前把该查的都查完（这些命令都是只读的，随便跑）：
 
 ```bash
-HAO_SERVICES="maintenance,nginx,docker,new-api"
-HAO_ACCESS_MODE="domain"
-HAO_NEWAPI_DOMAIN="api.example.com"
-HAO_DB_TYPE="postgresql"
+"$SKILL/scripts/hao-state.sh" services     # 这台机器已经装了什么
+"$SKILL/scripts/hao-state.sh" drift        # 有没有被手工改过
+"$SKILL/scripts/hao-guard.sh" ...          # 目标资源归属，见各 reference
 ```
 
-For multiple Web services, use distinct domains:
+如果 `services` 显示这台机器已经被 HAO 管理过，先读
+`/var/lib/hao/HANDOFF.md`，再看 `references/handoff.md` 的接手流程。
+
+### 3. 讲清楚，然后拿到确认
+
+把将要发生的系统变更用普通话讲一遍再动手。用户是小白，他无法从命令里看出
+风险，这一步是他唯一的保护。具体要求见 `references/safety.md`。
+
+### 4. 按 reference 执行
+
+一个模块一份过程文档，照着做，不要凭记忆：
+
+| 模块 | 文档 | 作用 |
+|---|---|---|
+| `maintenance` | `references/maintenance.md` | fail2ban、swap、journald 上限、Docker 日志轮转 |
+| `nginx` | `references/nginx.md` | Nginx（nginx.org 源，含 HTTP/3）+ 内核调优 |
+| `docker` | `references/docker.md` | Docker Engine + Compose 插件 |
+| `node` | `references/node.md` | 系统级 Node.js LTS（落在 `/usr/bin`） |
+| `uv` | `references/uv.md` | uv Python 管理器 + Python 使用约定 |
+| `claude-code` | `references/claude-code.md` | Claude Code CLI + 网关/模型配置 |
+| `git-github` | `references/git-github.md` | Git 身份、GitHub CLI、授权助手 |
+| `site` | `references/site.md` | 从 Git 仓库部署静态站或 Node 站，含证书 |
+| `new-api` | `references/new-api.md` | New-API 模型网关（Compose） |
+| `cliproxyapi` | `references/cliproxyapi.md` | CliproxyAPI 网关（Compose） |
+
+另外几份跨模块文档：
+
+- `references/handoff.md` —— 状态记录格式与交接契约（收尾必读）
+- `references/images.md` —— 容器镜像固定 tag，别用 `latest`
+- `references/safety.md` —— 完整安全契约
+- `references/uninstall.md` —— 卸载流程。**只在用户明确要求时才读它**
+
+配置文件内容全部在 `templates/`，把 `@@TOKEN@@` 换成实际值再写入。
+**模板是内容的权威来源**，里面每一行都有原因，不要自己重写一份"差不多的"。
+含密钥的模板（compose、config.yaml）必须用 `hao-secret.sh render` 渲染，
+不要自己读出密钥再拼进去。
+
+### 5. 验证
+
+每一步都要拿到真实证据，不要因为命令退出码是 0 就报成功：
+
+- 服务：`systemctl is-active`，以及端口真的在监听
+- Nginx：`nginx -t` 通过，且 reload 成功
+- 站点：能取到预期内容
+- 调优项：回读实际生效值（例如 BBR 要看 `sysctl -n net.ipv4.tcp_congestion_control`）
+
+失败就停下来如实汇报，把原始输出给用户。
+
+### 6. 记录状态并交接（不可跳过）
 
 ```bash
-HAO_SERVICES="maintenance,nginx,docker,cliproxyapi,new-api"
-HAO_ACCESS_MODE="domain"
-HAO_CLIPROXY_DOMAIN="cpa.example.com"
-HAO_NEWAPI_DOMAIN="api.example.com"
+"$SKILL/scripts/hao-state.sh" record <service> installed OWNERSHIP:PATH ...
+"$SKILL/scripts/hao-state.sh" handoff
 ```
 
-Deploy your own sites with the `site` module (excluded from `all`; node-type sites also need `node` in `HAO_SERVICES`):
+这一步是整个 skill 存在的理由之一：机器和会话都是即用即抛的，只有主机上的
+记录能让下一个 agent 接手。归属类别怎么选、交接文档写了什么，
+见 `references/handoff.md`。
 
-```bash
-HAO_SERVICES="nginx,site"
-HAO_SITES="blog"
-HAO_SITE_BLOG_REPO="git@github.com:me/blog.git"
-HAO_SITE_BLOG_TYPE="static"
-HAO_SITE_BLOG_DOMAIN="blog.example.com"
-```
+## 三个必须走脚本的地方
 
-Re-deploy updated site code with `hao update` (root + `--yes`), which runs every generated `hao-site-update-*` script; `hao credentials` lists credential file paths read-only.
+其余步骤你直接用 shell 命令做就行。只有这三类事情不能即兴发挥：
 
-## Safety
+| 脚本 | 为什么不能自己来 |
+|---|---|
+| `scripts/hao-secret.sh` | 密钥值绝不能进入对话记录。它负责生成、复用、注入，你只看到路径和 key 名 |
+| `scripts/hao-state.sh` | 下一个 agent 要能**信任**状态记录。格式漂了，交接契约就废了 |
+| `scripts/hao-guard.sh` | 覆盖前的归属判断。全部只读，返回 `foreign` 就必须停 |
 
-Before `apply`, state that HAO may install packages, enable systemd services, write under `/opt`, `/etc/nginx`, `/etc/docker`, `/var/log/vps-deploy`, and `/var/lib/hao`, and may request/replace Nginx service configs for selected Web services.
+三个脚本都支持 `-h` 查看用法。
 
-Do not run destructive uninstall, volume deletion, SSH hardening changes, or production certificate replacement unless the user explicitly asks and confirms the specific action.
+## 硬规则
 
-## References
+完整版见 `references/safety.md`，最关键的四条：
 
-- Read `references/services.md` when choosing service names, dependencies, and profile variables.
-- Read `references/safety.md` before applying changes on a real VPS.
+1. **改系统之前先讲清楚并取得确认**，只读检查不需要确认。
+2. **`foreign` / `not-git` / `remote-mismatch` 一律停下**，绝不覆盖别人的东西，
+   绝不 `rm -rf` 用户的目录。
+3. **凭据只报路径**，永不打印内容；用户自带密钥走 `@file:` / `@env:`，
+   不要放进命令行参数。
+4. **如实汇报**。失败说失败，降级说降级，没生效说没生效。
+
+## 收尾汇报
+
+用普通话告一段，不要甩路径清单。至少包含：能怎么访问、之后怎么更新、
+凭据文件在哪（只有路径）、有哪些需要他自己去做的事（比如放行 443 端口、
+改 DNS）。
+
+如果这台机器是用完就销毁的，提醒用户：**把部署时的那几个回答自己留一份**
+（仓库地址、域名、类型、构建命令）。有了它们在新机器上重放一遍就行；
+`/var/lib/hao` 里的状态会随机器一起消失。

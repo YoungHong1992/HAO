@@ -1,0 +1,7 @@
+# Managed by HAO
+# Service: nginx
+# 目标路径: /etc/apt/preferences.d/99nginx
+# 让 nginx.org 的包优先于发行版自带包，避免升级时被换回旧版本。
+Package: nginx*
+Pin: origin nginx.org
+Pin-Priority: 900

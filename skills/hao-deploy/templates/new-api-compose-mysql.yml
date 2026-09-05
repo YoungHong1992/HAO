@@ -1,0 +1,53 @@
+# Managed by HAO
+# Service: new-api
+# 目标路径: /opt/docker-services/new-api/docker-compose.yml
+#
+# MySQL 版本。渲染方式与 PostgreSQL 版相同（见 new-api-compose-postgres.yml 头部）。
+#
+# ⚠️ 引擎不可中途切换：已经跑起来的 PostgreSQL 部署换成 MySQL 不是「升级」，
+# 数据不会自动迁移。HAO 拒绝把一个空数据库当成迁移结果。用户确实要换引擎，
+# 必须自己先导出数据，并明确确认要放弃现有库。
+services:
+  new-api:
+    image: @@IMAGE@@
+    container_name: new-api
+    restart: always
+    command: --log-dir /app/logs
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    environment:
+      - SQL_DSN=root:@@DB_PASSWORD@@@tcp(mysql:3306)/new-api
+      - REDIS_CONN_STRING=redis://redis
+      - SESSION_SECRET=@@SESSION_SECRET@@
+      - TZ=Asia/Shanghai
+      - ERROR_LOG_ENABLED=true
+      - BATCH_UPDATE_ENABLED=true
+    depends_on:
+      - redis
+      - mysql
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/status >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: new-api-redis
+    restart: always
+
+  mysql:
+    image: mysql:8.2
+    container_name: new-api-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: @@DB_PASSWORD@@
+      MYSQL_DATABASE: new-api
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+volumes:
+  mysql_data:

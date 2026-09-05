@@ -131,7 +131,9 @@ dig +short your-domain.com
 - 使用自签名证书或不申请证书（此时模块本就不会跳转，`REDIRECT=no` 只是显式声明）；
 - 调试阶段需要绕过 HTTPS 直接验证源站。
 
-> 橙云模式下 `dig` 返回的是 Cloudflare 边缘节点 IP 而非源站 IP，`hao preflight` 的 DNS 比对警告属预期现象。
+> 橙云（代理开启）模式下 `dig` / `getent hosts` 返回的是 Cloudflare 边缘节点 IP
+> 而非源站 IP。此时 skill 的「域名解析是否指向本机」检查会对不上，这是预期现象，
+> 不代表 DNS 配错了。证书申请仍可正常完成（走 80 端口的 ACME HTTP 校验）。
 
 ---
 

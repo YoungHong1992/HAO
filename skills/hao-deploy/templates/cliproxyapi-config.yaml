@@ -1,0 +1,63 @@
+# CliproxyAPI Configuration
+# Managed by HAO
+# Service: cliproxyapi
+# 目标路径: /opt/docker-services/cliproxyapi/config.yaml  （权限必须 0600）
+#
+# 这份模板含 @@ 占位符，**必须用 hao-secret.sh render 渲染**：
+#   hao-secret.sh write /etc/hao/cliproxyapi.env \
+#       ADMIN_SECRET=@password API_KEY_1=@apikey API_KEY_2=@apikey
+#   hao-secret.sh render <本模板> /opt/docker-services/cliproxyapi/config.yaml \
+#       --from /etc/hao/cliproxyapi.env --mode 0600
+#
+# 幂等要点：重跑时 hao-secret.sh 默认复用已有密钥，管理密码和 API key
+# 不会因为重新部署而变化。绝不要把这些值打印出来。
+
+# ==================== Server ====================
+host: "127.0.0.1"
+port: 8317
+
+# ==================== Authentication ====================
+auth-dir: "/root/.cli-proxy-api/auth"
+
+# 客户端认证用的 API key
+api-keys:
+  - "@@API_KEY_1@@"
+  - "@@API_KEY_2@@"
+
+# ==================== Management Panel ====================
+remote-management:
+  allow-remote: true
+  secret-key: "@@ADMIN_SECRET@@"
+  disable-control-panel: false
+  panel-github-repository: "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"
+
+# ==================== Logging ====================
+debug: false
+logging-to-file: true
+logs-max-total-size-mb: 100
+
+# ==================== Performance ====================
+commercial-mode: false
+usage-statistics-enabled: false
+
+# ==================== Request Handling ====================
+proxy-url: ""
+force-model-prefix: false
+request-retry: 3
+max-retry-interval: 30
+
+quota-exceeded:
+  switch-project: true
+  switch-preview-model: true
+
+routing:
+  strategy: "round-robin"
+
+ws-auth: false
+
+# ==================== TLS ====================
+# TLS 由 Nginx 终结，容器内保持关闭
+tls:
+  enable: false
+  cert: ""
+  key: ""

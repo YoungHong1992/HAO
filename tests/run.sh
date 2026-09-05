@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
+ROOT_DIR="$(cd "$ROOT_DIR" && pwd)"
 
-printf '== syntax ==\n'
+printf '== bash -n ==\n'
 find "$ROOT_DIR" -path "$ROOT_DIR/.git" -prune -o -name '*.sh' -print0 \
   | xargs -0 -n1 bash -n
 
@@ -20,60 +21,29 @@ else
   exit 1
 fi
 
-printf '== helper sync (install.sh <-> lib) ==\n'
-"$ROOT_DIR/tests/test-helper-sync.sh"
+printf '== skill structure ==\n'
+"$ROOT_DIR/tests/test-skill-structure.sh"
 
-printf '== common and crypto helpers ==\n'
-"$ROOT_DIR/tests/test-common-crypto.sh"
+printf '== hao-guard ==\n'
+"$ROOT_DIR/tests/test-guard.sh"
 
-printf '== credentials helpers ==\n'
-"$ROOT_DIR/tests/test-credentials.sh"
+printf '== hao-secret ==\n'
+"$ROOT_DIR/tests/test-secret.sh"
 
-printf '== release identity ==\n'
-"$ROOT_DIR/tests/test-release-identity.sh"
-
-printf '== ownership state and drift ==\n'
+printf '== hao-state ==\n'
 "$ROOT_DIR/tests/test-state.sh"
 
-printf '== apply resource safety gates ==\n'
-"$ROOT_DIR/tests/test-apply-safety.sh"
-
-printf '== cli profile ==\n'
-"$ROOT_DIR/tests/test-cli-profile.sh"
-
-printf '== git and github tooling ==\n'
-"$ROOT_DIR/tests/test-git-github.sh"
-
-printf '== supported operating systems ==\n'
-"$ROOT_DIR/tests/test-supported-os.sh"
-
-printf '== generic skills ==\n'
+printf '== generic skill (runtime-neutral) ==\n'
 "$ROOT_DIR/tests/test-generic-skills.sh"
-
-printf '== cli-only root ==\n'
-"$ROOT_DIR/tests/test-cli-only-root.sh"
 
 printf '== hidden modules ==\n'
 "$ROOT_DIR/tests/test-hidden-modules.sh"
 
-printf '== node module ==\n'
-"$ROOT_DIR/tests/test-node.sh"
-
-printf '== site module ==\n'
-"$ROOT_DIR/tests/test-site.sh"
-
-printf '== smoke ==\n'
-"$ROOT_DIR/install.sh" --version >/dev/null
-"$ROOT_DIR/install.sh" -h >/dev/null
-"$ROOT_DIR/install.sh" >/dev/null
-"$ROOT_DIR/hao" --version >/dev/null
-"$ROOT_DIR/hao" help >/dev/null
-"$ROOT_DIR/hao" plan --services uv >/dev/null
-"$ROOT_DIR/hao" plan --services node >/dev/null
-HAO_SITES=demo HAO_SITE_DEMO_REPO=/tmp/x HAO_SITE_DEMO_TYPE=static "$ROOT_DIR/hao" plan --services site >/dev/null
-"$ROOT_DIR/hao" credentials >/dev/null
-"$ROOT_DIR/hao" status >/dev/null
-"$ROOT_DIR/hao" doctor --services uv >/dev/null
-"$ROOT_DIR/hao" inventory >/dev/null
+if command -v claude >/dev/null 2>&1; then
+  printf '== plugin manifest validation ==\n'
+  claude plugin validate "$ROOT_DIR" --strict
+else
+  printf '== plugin validate skipped: claude CLI not installed ==\n' >&2
+fi
 
 printf 'All tests passed.\n'

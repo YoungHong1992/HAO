@@ -1,316 +1,151 @@
-<p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="HAO（HongAgentOps）— AI 原生服务器部署工具：让 AI agent 安全地替你部署 VPS，计划先行、确认后执行、全程可审计">
-</p>
+# HAO — HongAgentOps
 
-<p align="center">
-  <a href="https://github.com/YoungHong1992/HAO/actions/workflows/ci.yml"><img src="https://github.com/YoungHong1992/HAO/actions/workflows/ci.yml/badge.svg" alt="CI 状态"></a>
-  <a href="https://github.com/YoungHong1992/HAO/releases"><img src="https://img.shields.io/github/v/release/YoungHong1992/HAO?label=release&color=e8a03e" alt="最新发布标识"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-4bb365" alt="MIT 许可证"></a>
-</p>
+> **一个 AI agent skill**，帮你把一台 Debian/Ubuntu 服务器变成能用的东西：
+> 一个上线的网站，或者一台能干活、能学习的机器。
+>
+> 你不需要懂运维。说清你想要什么，agent 负责检查、部署、验证，
+> 并在主机上留下交接记录——之后任何 agent 接手都照同一套规则走。
 
-HongAgentOps 是洪哥出品的 AI 原生服务器部署工具。它把传统终端菜单改造成适合 AI agents 调用的确定性 CLI：**人在对话里确认目标和风险，AI 生成部署 profile、检查环境、执行明确的参数化命令**。纯 Bash 实现，零运行时依赖，面向 Debian/Ubuntu VPS。
+HAO（HongAgentOps）不是命令行工具，是一套**给 AI agent 用的部署知识**：
+过程文档 + 配置模板 + 三个守住确定性的小脚本。
 
-> 🤖 **如果你是 AI agent**：先读 [AGENTS.md](AGENTS.md)——工作流契约、知识库索引、skill 安装方式都在那里。
+## 安装
 
-## 眼见为实
+在**目标服务器上**安装（不是你的笔记本）：
 
-`plan` 是只读的。下面是它在一台真实机器上的原样输出——先告诉你会发生什么，不碰系统一根手指：
-
-```text
-$ ./hao plan --services new-api --domain api.example.com
-
-HAO deployment plan
-Release: dev-d1f9124
-
-Install order:
-  - New-API
-    dependencies: nginx docker
-    access_mode: domain
-    endpoint: api.example.com
-    action: ensure
-    database: postgresql
-    image: calciumion/new-api:latest
-    image_candidates:
-      - calciumion/new-api:latest (rolling default)
-      - calciumion/new-api:v1.0.0-rc.21 (release-candidate)
-    candidates_checked: 2026-07-13
-
-System changes expected:
-  - May install OS packages and enable systemd services
-  - May write files under /opt, /etc/nginx, /etc/docker, /var/log/vps-deploy, /var/lib/hao
-  - Records HAO ownership and resource hashes in /var/lib/hao/manifest.json
-  - Nginx configs are backed up before overwrite where supported
-  - Secret values are written to credential files and are not printed
+```
+/plugin marketplace add YoungHong1992/HAO
+/plugin install hao-deploy@hao
 ```
 
-这套流程由可查证的机制守护：
+然后直接说你要什么：
 
-- **测试门禁**：`tests/` 下 15 个测试脚本——`bash -n` 语法检查、全仓 shellcheck、单元与 CLI 冒烟测试，每次提交由 [CI workflow](.github/workflows/ci.yml) 执行
-- **真实安装验证**：[Integration workflow](.github/workflows/integration.yml) 在真实 runner 上做双次 `apply` 幂等测试（maintenance / New-API 双数据库 / uv / 所有权安全）
-- **发布验收**：每次发布前在验收矩阵内的全部 Ubuntu LTS 真机上完成验收，证据 URL 写入归档内 `build-info.json`（见[发布流程](docs/releasing.md)）
-- **镜像候选审查**：Docker 固定标签候选记录于 [`config/image-candidates.tsv`](config/image-candidates.tsv)，含 UTC 审查日期，发布工作流拒绝过期记录
+> 帮我把 github.com/me/blog 这个仓库部署到 blog.example.com
 
-## 为什么不一样
+> 服务器刚买的，先弄安全一点
 
-传统部署脚本靠交互菜单，AI 用不了；直接让 AI 跑任意 shell，你不放心。HAO 把两件事分开：
+> 这台机器上装了什么？
 
-- **只读命令随便跑**：`plan` / `preflight` / `status` / `doctor` / `inventory` 不修改任何东西
-- **修改系统只有一条路**：root + 显式 `--yes`（或 `HAO_CONFIRM_APPLY=yes`），且只做计划里列出的事
-- **每个改动可审计**：归属和文件哈希写入管理清单，事后随时用 `inventory` / `doctor` 核对
+## 为什么必须在服务器上运行
 
-## 快速开始
+HAO 的所有操作都是本机操作。如果你在笔记本上装了这个 skill 而想部署一台远程
+VPS，agent 会**先拦住你**并说明：请先 `ssh` 到那台服务器，在服务器上启动
+Claude Code。在笔记本上跑这套流程只会把笔记本改坏。
 
-```bash
-git clone https://github.com/YoungHong1992/hao.git
-cd hao
+## 能装什么
 
-cat > deploy.env <<'EOF'
-HAO_SERVICES="maintenance,nginx,docker,new-api"
-HAO_ACCESS_MODE="domain"
-HAO_NEWAPI_DOMAIN="api.example.com"
-HAO_DB_TYPE="postgresql"
-EOF
-
-./hao plan --profile deploy.env        # 只读：输出变更计划
-./hao preflight --profile deploy.env   # 只读：检查 OS、权限、DNS、端口
-sudo ./hao apply --profile deploy.env --yes   # 确认后才执行
-./hao status                           # 只读：查看部署结果
-```
-
-> 建议由 AI agent 先和你确认服务、域名、数据库、风险项，再生成 `deploy.env`。
-
-## 部署工作流
-
-<p align="center">
-  <img src="./assets/readme/workflow.svg" width="100%" alt="HAO 部署工作流：问询与 Profile → hao plan → hao preflight → 用户确认（sudo + --yes）→ hao apply → status/doctor。plan、preflight、status、doctor 只读；apply 是唯一修改系统的步骤">
-</p>
-
-`--yes` 只确认部署计划，不授权覆盖所有权冲突。受管资源发生漂移时还需要单独的 `--allow-managed-drift`；目标路径已有未跟踪文件时需要单独的 `--allow-untracked-overwrite`。两项确认互不替代，使用前应先审查 plan/preflight 列出的具体路径。
-
-> 同时部署多个 Web 服务时，请为每个服务准备独立域名，避免争用同一个 Nginx `server_name` 和 `/` 路由。
-
-## 组件
-
-| 组件 | 描述 | 资源需求 |
-|------|------|----------|
-| **Maintenance** | fail2ban、swap、journald 限制、Docker 日志轮转 | 基础维护 |
-| **Nginx** | HTTP/3 (QUIC) + BBR 优化，所有 Web 服务的统一入口 | 512MB 内存 |
-| **Docker** | Docker Engine + Compose 插件 | 无额外需求 |
-| **Git + GitHub** | Git 身份 + 官方 `gh` + Web/SSH 授权准备；不包含在 `all` | 开发机 / 管理型 VPS |
-| **CliproxyAPI** | 轻量 AI API 转发代理，默认 Docker Compose，可选裸机 | 256MB 内存 |
-| **New-API** | AI 模型网关与资产管理系统，Docker Compose | ≥ 1GB 内存 |
-| **Claude Code** | Anthropic 官方终端 AI 编程助手，可选自定义网关/模型 | 500MB 磁盘 |
-| **uv** | uv Python 包/环境管理器 + AI 助手虚拟环境使用约定 | 50MB 磁盘 |
-| **Node.js** | Node.js LTS 系统级运行时（NodeSource apt 仓库，node/npm 落在 `/usr/bin`） | 运行时，无额外需求 |
-| **Site** | 通用站点部署：git → 构建 → Nginx → 证书，支持多站点；不包含在 `all` | 静态站无额外需求 / Node 应用按应用而定 |
-
-CliproxyAPI / New-API 依赖 Nginx（Docker Compose 部署还依赖 Docker），缺少依赖时脚本会提示先安装。CPA 裸机模式：`HAO_CLIPROXY_MODE=bare`。
-
-<details>
-<summary><b>用一句话理解 Nginx</b>（面向非技术用户）</summary>
-
-可以把 **Nginx 理解成服务器入口处的"接线员兼门卫"**：外部请求先到 Nginx，Nginx 看清请求要找谁，再把它转接给 New-API、CliproxyAPI 等内部服务；同时还负责 HTTPS 证书、标准的 80/443 端口、WebSocket、访问日志和基础访问控制。
-
-```text
-api.example.com ──┐
-                  ├──> Nginx（接线员）──> 对应的内部服务
-cpa.example.com ──┘
-```
-
-域名就像分机号。同一个公网 IP 上部署多个服务时，Nginx 根据域名把请求转到不同服务；完全不用域名时也可以用 `IP:不同端口` 区分，但多个服务不能同时占用相同的 80/443 端口。技术上单个内网服务可以不经过 Nginx 直接用 `IP:端口` 访问；当前 HAO 的 New-API 和 CliproxyAPI 部署仍将 Nginx 作为统一入口。生产环境建议保留 Nginx；只有在内网、VPN 等受控环境中直接开放服务端口才通常更合适。
-
-</details>
-
-<details>
-<summary><b>Git、gh、SSH Key 分别做什么</b>（git-github 组件的边界）</summary>
-
-三层分工：Git 的 `user.name` / `user.email` 决定提交上写谁；SSH Key 负责安全地拉取和推送仓库；`gh` 负责创建 PR、Release 等平台操作。HAO 默认采用 `gh auth login --web --git-protocol ssh`，不要求手工创建长期 Token。
-
-- `git-github` 是个人身份工具，必须显式选择，不随 `--services all` 安装
-- AI 必须先询问用户准确的姓名、邮箱、目标系统用户、机器角色和配置范围，不能自动推导
-- 安装只准备工具和 Git 身份；浏览器/设备码授权由目标用户随后运行 `hao-github-authorize` 完成
-- 生产 VPS 只拉公开仓库选 `skip`；私有仓库自动部署优先用只读 Deploy Key 或 GitHub App
-- root-only VPS 可明确选择 `root`，HAO 会警告凭据和 SSH Key 归 root 所有，但不阻止授权
-
-</details>
-
-## 部署自己的项目
-
-除内置服务外，`site` 组件可以部署你自己的站点：声明若干 git 仓库，HAO 完成 克隆 → 构建 → 发布/启动 → Nginx 虚拟主机 → Let's Encrypt 证书 → 更新脚本 的全流程。适合 Docusaurus/VitePress/Hugo 等静态站点，以及自带 `server.js` 的 Node 应用。
-
-最小示例（一个来自 git 仓库的静态站 + 域名）：
-
-```bash
-HAO_SERVICES="nginx,site"
-HAO_SITES="blog"
-HAO_SITE_BLOG_REPO="git@github.com:me/blog.git"   # git URL 或本地路径
-HAO_SITE_BLOG_TYPE="static"                       # static | node
-HAO_SITE_BLOG_DOMAIN="blog.example.com"
-HAO_SITE_BLOG_BUILD="npm ci && npm run build"     # 无需构建可省略
-HAO_SITE_BLOG_OUTPUT="build"
-```
-
-`site` 不包含在 `all` 中，必须显式声明 `HAO_SITES`；每个站点读取一组 `HAO_SITE_<ID>_*` 变量，一次运行可部署多个站点。部署后用 `sudo ./hao update` 依次运行全部站点更新脚本。默认在真实证书签发后开启 80→443 跳转，请先确认云安全组已放行 443/TCP（否则用 `HAO_SITE_BLOG_REDIRECT=no` 关闭）。完整变量、Node 应用配置与多站点模型见 [`site/README.md`](site/README.md)；配合 Cloudflare 代理见 [Cloudflare DNS 配置指南](docs/cloudflare-dns-guide.md)。
-
-## 资源归属与审计
-
-通过 HAO 成功部署后，根执行器会在 `/var/lib/hao/` 写入不含秘密的管理清单：
-
-<p align="center">
-  <img src="./assets/readme/ownership.svg" width="100%" alt="HAO 资源归属模型：managed 由 HAO 生成维护并校验漂移；shared 属于系统不可独占；observed 仅记录存在；secret 只记录凭据路径。无 HAO 标识的配置默认保留">
-</p>
-
-```bash
-./hao inventory    # 机器可读的 JSON 管理清单
-./hao status       # 服务安装情况与 managed/observed/untracked 状态
-./hao doctor       # 检查服务状态、环境和受管文件是否被修改或删除
-```
-
-含运行时秘密的生成配置仅 root 可读；manifest 不保存文件内容，普通受管文件只记录 SHA-256 用于发现漂移。较早的 HAO 部署没有统一 manifest，升级后显示为 `untracked`，直到通过新版 HAO 完成一次受控重部署——HAO 不会仅凭文件路径自动认领旧资源。
-
-## 其他安装方式
-
-<details>
-<summary><b>下载发布包安装</b>（推荐生产环境固定发布标识）</summary>
-
-```bash
-curl -fsSLO https://github.com/YoungHong1992/hao/releases/latest/download/hao.tar.gz
-tar xzf hao.tar.gz
-cd hao
-./hao plan --services new-api --domain api.example.com
-```
-
-生产环境固定发布标识并校验：
-
-```bash
-HAO_RELEASE="260713-abcdef0" # 替换为实际发布标识
-curl -fsSLo hao.tar.gz "https://github.com/YoungHong1992/hao/releases/download/${HAO_RELEASE}/hao.tar.gz"
-curl -fsSLo checksums.txt "https://github.com/YoungHong1992/hao/releases/download/${HAO_RELEASE}/checksums.txt"
-sha256sum -c checksums.txt
-```
-
-发布标识形如 `YYMMDD-<git-short-hash>`，只标识一次不可变构建，不表达兼容级别。归档内的 `RELEASE` 和 `build-info.json` 记录发布标识、完整提交哈希、UTC 构建时间和真机验收记录。
-
-</details>
-
-<details>
-<summary><b>远程自举入口</b></summary>
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/YoungHong1992/hao/main/install.sh | bash
-```
-
-无参数运行只显示帮助，不进入终端菜单。根入口只作为确定性 CLI 执行器和远程自举入口；请使用 release 包或完整仓库中的 `hao plan/preflight/apply/status/doctor`。
-
-</details>
-
-<details>
-<summary><b>单独安装某个组件</b></summary>
-
-每个组件目录都有统一命名的 `install.sh`，供 `hao apply` 非交互调用，也可单独运行（推荐保留完整仓库结构，部分组件依赖 `lib/` 公共库）：
-
-```bash
-cd maintenance && sudo ./install.sh        # 服务器维护基线
-cd ../nginx && sudo ./install.sh           # Nginx
-cd ../docker && sudo ./install.sh          # Docker
-cd ../cliproxyapi && sudo ./install.sh     # CliproxyAPI（默认 Docker Compose）
-cd ../new-api && sudo ./install.sh         # New-API
-cd ../claude-code && sudo ./install.sh     # Claude Code
-cd ../uv && sudo ./install.sh              # uv + Python 环境约定
-cd ../node && sudo ./install.sh            # Node.js LTS（NodeSource，系统级）
-```
-
-`git-github` 需要逐项确认身份信息：
-
-```bash
-cd git-github && sudo \
-  HAO_GIT_NAME="用户确认的姓名" \
-  HAO_GIT_EMAIL="用户确认的邮箱" \
-  HAO_GIT_MACHINE_ROLE=workstation \
-  HAO_GIT_SCOPE=global \
-  HAO_GIT_TARGET_USER="$USER" \
-  ./install.sh
-```
-
-`site` 的全部配置通过环境变量传入（无交互确认，依赖 Nginx）：
-
-```bash
-cd site && sudo \
-  HAO_SITES="blog" \
-  HAO_SITE_BLOG_REPO="git@github.com:me/blog.git" \
-  HAO_SITE_BLOG_TYPE=static \
-  HAO_SITE_BLOG_DOMAIN="blog.example.com" \
-  ./install.sh
-```
-
-</details>
-
-## 配置参考
-
-Profile 支持的常用变量（也可用等价 CLI 参数）：
-
-```bash
-HAO_SERVICES="maintenance,nginx,docker,cliproxyapi,new-api,claude-code,uv,node"
-HAO_ACCESS_MODE="domain"       # domain | ip | http
-HAO_CLIPROXY_DOMAIN="cpa.example.com"
-HAO_NEWAPI_DOMAIN="api.example.com"
-HAO_CLIPROXY_MODE="docker"     # docker | bare
-HAO_DB_TYPE="postgresql"       # postgresql | mysql
-HAO_NEWAPI_ACTION="ensure"     # ensure | upgrade | migrate-db
-HAO_CONFIRM_APPLY="yes"        # 等价于 apply --yes
-```
-
-要点：
-
-- 已有 New-API 在 `ensure` 下默认 no-op；显式 `upgrade` 才刷新镜像和配置，且必须复用现有数据库、Redis 与 Session 密钥
-- 数据库引擎切换必须走独立、可回滚的数据迁移流程；HAO 不把创建空库当作迁移
-- Docker 镜像默认跟随 `latest`，`hao plan` 会同时显示最近审查确认的两个固定标签（来源 `config/image-candidates.tsv`）；New-API 当前上游候选仍属 RC，计划输出会明确标记 `release-candidate`
-- `git-github` 使用单独 profile（`HAO_GIT_*` / `HAO_GH_AUTH_MODE`），字段全部要求用户逐项确认
-
-完整变量与服务别名见 [`skills/hao-deploy/references/services.md`](skills/hao-deploy/references/services.md)。
-
-### AI Agent Skill
-
-仓库内置 `skills/hao-deploy`，让各类 AI agent 按 HAO 的安全流程部署服务，不绕过任何确认机制：
-
-```bash
-./skills/hao-deploy/scripts/install-skill.sh                       # Claude Code (~/.claude/skills)
-./skills/hao-deploy/scripts/install-skill.sh --dir /path/to/skills # 其他 agent 运行时
-```
-
-## 支持的操作系统
-
-正式支持矩阵遵循 Debian stable/oldstable 与 Ubuntu 标准维护期内的主流 LTS，`preflight` 会拒绝矩阵外的版本：
-
-| 发行版 | 支持版本 |
+| 模块 | 内容 |
 |---|---|
-| Debian | 13、12 |
-| Ubuntu LTS | 26.04、24.04、22.04 |
+| `maintenance` | fail2ban SSH 防护、swap、journald 日志上限、Docker 日志轮转 |
+| `nginx` | Nginx（nginx.org 源，含 HTTP/3）+ BBR 与内核调优 |
+| `docker` | Docker Engine + Compose 插件 |
+| `node` | 系统级 Node.js LTS（落在 `/usr/bin`，systemd 服务可用） |
+| `uv` | uv Python 环境管理器 + 写入「一律用 uv」的 agent 约定 |
+| `claude-code` | Claude Code CLI + 网关/模型配置 |
+| `git-github` | Git 提交身份、官方 GitHub CLI、独立的授权助手 |
+| `site` | 从 Git 仓库部署静态站或 Node 站，含 Let's Encrypt 证书与更新脚本 |
+| `new-api` | New-API 模型网关（Docker Compose） |
+| `cliproxyapi` | CliproxyAPI 网关（Docker Compose） |
 
-> **发布验收仅覆盖 Ubuntu。** Debian 仍是受支持的安装目标，但发布前的真机验收与 CI 集成测试只在 Ubuntu 上执行（GitHub 托管 runner 没有 Debian 镜像，容器无法真实验证 systemd/Docker/UFW）。贡献者请勿添加或运行 Debian 验收测试，详见 [docs/releasing.md](docs/releasing.md)。
+支持系统：Debian 13/12，Ubuntu 26.04/24.04/22.04 LTS。
+验收只在 Ubuntu 上做（见下）。
 
-## 安全设计
+## 交接契约：机器可以扔，知识不能丢
 
-- 所有密码和密钥使用加密安全随机数生成；秘密只写入凭据文件，日志与输出仅记录路径
-- SSL/TLS 最低 TLSv1.2；支持域名（Let's Encrypt）和 IP（自签名）两种证书模式
-- fail2ban 默认防 SSH 暴力破解；swap 按内存自动配置降低 OOM 风险
-- journald / Docker 日志轮转限制磁盘占用；安装日志记录到 `/var/log/vps-deploy/`
-- Nginx 配置先备份再覆盖
+服务器可以是即用即抛的，部署它的那次对话也一定会消失。所以 HAO 把状态写在
+**主机上**，而不是留在聊天记录里：
+
+```
+/var/lib/hao/
+├── HANDOFF.md        给下一个 agent 看：装了什么、凭据在哪、什么不能碰
+├── manifest.json     机器可读的资源清单（含归属类别与内容哈希）
+└── services/         每个服务一份记录
+```
+
+部署收尾时 skill 会把一个指针块写进本机 AI 助手的指令文件，
+所以**下一个 agent 不需要谁告知，开机就知道这台机器由 HAO 管理**。
+
+资源分四种归属，决定后续 agent 能做什么：
+
+| 归属 | 含义 | 允许的操作 |
+|---|---|---|
+| `managed` | HAO 创建并负责 | 可按流程重写；发现漂移要先问人 |
+| `shared` | HAO 改过、但属于系统 | 只能改自己那部分，不可整体覆盖 |
+| `observed` | 仅记录 | 只读 |
+| `secret` | 凭据文件 | 只报路径，永不打印内容 |
+
+随时可以查：
+
+```bash
+SKILL=~/.claude/plugins/cache/hao-deploy/skills/hao-deploy   # 实际路径见 /plugin
+"$SKILL/scripts/hao-state.sh" services      # 装了什么
+"$SKILL/scripts/hao-state.sh" drift         # 有没有被手工改过
+"$SKILL/scripts/hao-state.sh" credentials   # 凭据文件路径（不含内容）
+```
+
+## 安全底线
+
+- **改系统之前先讲清楚并取得确认。** 只读检查不需要确认。
+- **绝不覆盖不属于自己的东西。** 目标已存在且不是 HAO 管理的，一律停下来问。
+- **凭据只报路径。** 密钥由 `hao-secret.sh` 生成并直接落到 0600 文件，
+  值不经过对话；注入配置用模板渲染，不把密钥读出来再拼。
+- **如实汇报。** 失败说失败，证书降级说降级，BBR 没生效说没生效。
+- 不做卸载、删 volume、改 SSH/防火墙这类操作，除非用户明确要求那件具体的事。
+
+完整版见 `skills/hao-deploy/references/safety.md`。
+
+## 仓库结构
+
+```
+skills/hao-deploy/
+├── SKILL.md            入口：工作流程与硬规则
+├── references/         每个模块一份「怎么检查、怎么装」
+├── templates/          配置文件与生成物模板（内容的权威来源）
+└── scripts/            只有三件事必须走脚本
+    ├── hao-secret.sh   凭据生成/复用/注入 —— 值不进对话
+    ├── hao-state.sh    状态与交接契约 —— 格式不能漂
+    └── hao-guard.sh    覆盖前的归属判断 —— 全只读
+.claude-plugin/         插件与市场清单
+tests/                  结构完整性 + 三个脚本的行为测试
+```
+
+**没有 CLI，没有安装脚本。** 部署过程写在 `references/` 里由 agent 执行；
+只有密钥处理、状态写入、归属判断这三类必须确定性的事情保留成脚本。
 
 ## 开发
 
 ```bash
-apt-get install -y shellcheck
-./tests/run.sh                              # 静态检查 + 仓库测试
-sudo ./tests/test-maintenance-idempotency.sh # 真实安装幂等测试，只在 CI/临时机执行
+./tests/run.sh                     # 全量：bash -n、shellcheck、结构与行为测试、插件校验
+./tests/test-guard.sh              # 单跑某一项
+claude plugin validate . --strict  # 插件清单校验
+claude --plugin-dir . -p "..."     # 本地加载 skill 试跑
 ```
 
-- 新增组件遵循 [docs/adding-a-module.md](docs/adding-a-module.md)
-- 发布流程与真机验收矩阵见 [docs/releasing.md](docs/releasing.md)；GitHub Release 由 `Release` workflow 手工触发，标识自动生成，已有发布不会被覆盖
-- 辅助文档：[Cloudflare DNS 配置指南](docs/cloudflare-dns-guide.md) · [Claude Code 安装和配置指南](docs/claude-code-guide.md) · [Git + GitHub 工具说明](git-github/README.md)
+CI 在每次 push 上跑 `tests/run.sh`。所有 `*.sh` 必须过
+`bash -n` 与 `shellcheck -x -S warning`。
 
----
+**测试覆盖的边界要说清楚**：脚本的行为有测试，`references/` 里的**过程正确性
+没有自动化测试**——散文没法 shellcheck。改动过程文档后，需要在一台一次性
+Ubuntu VM 上真跑一遍验证。
 
-<p align="center">
-  <sub>发布标识 <code>YYMMDD-&lt;git-short-hash&gt;</code> · MIT License · 更新日期 2026-07-16</sub>
-</p>
+## 验收
+
+只在 Ubuntu 上做验收（26.04 / 24.04 / 22.04 LTS）。Debian 13/12 仍在支持列表里，
+但不作为发布门槛：GitHub 托管的 runner 没有 Debian 镜像，容器也无法真实地
+验证 systemd、Docker 和 UFW。
+
+每次验收用一台全新的一次性 VM，记录：系统镜像与架构、只读检查输出、
+第一次部署结果、第二次部署结果（验证幂等）、`drift` 输出、服务健康检查、
+以及销毁 VM。**验收记录里不要出现任何凭据。**
+
+## 分发
+
+通过插件市场分发（本仓库根的 `.claude-plugin/marketplace.json`）。
+用户 `/plugin marketplace add YoungHong1992/HAO` 即可，
+插件会被复制进本机 `~/.claude/plugins/cache`。
+
+`plugin.json` 里的 `version` 只是插件打包版本，供插件生态的 semver 校验使用。
+
+## 许可
+
+MIT，见 [LICENSE](LICENSE)。安全问题报告见 [SECURITY.md](SECURITY.md)。

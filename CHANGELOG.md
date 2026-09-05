@@ -1,9 +1,57 @@
 # Changelog
 
-HAO ships **immutable release identifiers** (`YYMMDD-<git-hash>`), not semantic
-versions. Maturity milestones like "1.0 (GA)" are documentation labels that point at
-one immutable build — see `docs/releasing.md`. Fill in the concrete `build <YYMMDD-hash>`
-when the corresponding `Release` workflow run mints it.
+HAO 通过插件市场分发（`.claude-plugin/marketplace.json`）。
+`plugin.json` 里的 `version` 只是插件打包版本。
+
+## 未发布 —— 转为纯 skill 形式
+
+HAO 从「一个由 agent 调用的 CLI」改成「一个 agent 直接执行的 skill」。
+部署过程从 bash 脚本变成 `skills/hao-deploy/references/` 里的过程文档 +
+`templates/` 里的配置模板，agent 自己执行并验证。
+
+### 移除
+
+- 根 CLI（`install.sh` 约 3100 行、`hao` 包装器）与 `lib/` 共享库：命令分派、
+  profile 解析、依赖解析、plan/status 输出格式化这一整层由 agent 本身取代。
+- 10 个模块目录下的 `install.sh` 及配套的卸载/升级脚本，合计约 11800 行 shell。
+- `AGENTS.md`、`config/image-candidates.tsv`、skill 内的 CLI 包装
+  （`hao-run.sh`、`install-skill.sh`）与 agent 专属文件。
+- `integration.yml` / `release.yml` 工作流与 18 个针对 CLI 的测试。
+
+### 新增
+
+- `.claude-plugin/{plugin.json,marketplace.json}`：可用
+  `/plugin marketplace add YoungHong1992/HAO` 一步安装。
+- 10 份模块过程文档（`references/`），加上 `handoff.md`、`safety.md`、
+  `images.md`、`uninstall.md`。
+- 20 份配置模板（`templates/`）。共享片段（SSL 参数、ACME location、
+  每站点内容块）改为写一份再 `include`，不再在每个 server 块里重复拼一遍。
+- 三个保留确定性的脚本：`hao-secret.sh`（凭据生成/复用/注入，值不进对话）、
+  `hao-state.sh`（状态与交接契约）、`hao-guard.sh`（覆盖前的只读归属判断）。
+- 新测试套件：结构完整性（frontmatter、悬空引用、模板卫生）+ 三个脚本的行为测试。
+
+### 行为变化
+
+- **交接契约落地**：`hao-state.sh handoff` 生成 `/var/lib/hao/HANDOFF.md`，
+  并把指针块写进本机 AI 助手的指令文件——下一个 agent 不需要被告知就能发现
+  这台机器由 HAO 管理。
+- **凭据文件改为合并语义**：少列一个 key 不会再把它从文件里抹掉。
+  内容未变时完全不写文件（真正的 no-op），落盘顺序规范化为按 key 排序。
+- **证书流程简化**：先让站点在 HTTP 上活起来再申请证书，去掉了临时 nginx 配置
+  与挪动 `sites-enabled/default` 的腾挪步骤。
+- 站点内容块不再在 80/443 两处各拼一份，消除了两处漂移的可能。
+- 镜像固定 tag 从 TSV 数据文件改为 `references/images.md`，并要求部署前用
+  `docker manifest inspect` 确认 tag 仍存在。
+
+### 已知取舍
+
+自动化测试不再覆盖部署过程的正确性——散文没法 shellcheck，真实安装验证也无法
+在 CI 里可靠复现。改动 `references/` 后需在一次性 Ubuntu VM 上手工验证，
+见 README 的「验收」一节。
+
+---
+
+以下为转为 skill 形式之前、CLI 时期的历史记录。
 
 ## 1.0 (GA) — build <YYMMDD-hash>
 
