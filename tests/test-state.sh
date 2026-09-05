@@ -153,6 +153,43 @@ grep -q "重要内容" "$WORK/broken.md" \
 "$STATE" handoff --user "$(id -un)" --skip-agent-files >/dev/null \
     && note "--skip-agent-files 可用" || bad "--skip-agent-files 失败"
 
+# ---------- handoff 必须重建 manifest ----------
+# references/uninstall.md 的清理流程是「删 services/<svc>.* 然后 handoff」。
+# 如果 handoff 不重建 manifest，清单里会留下一个已经不存在的服务，
+# 下一个 agent 会把幻影服务当真。
+"$STATE" record ghost installed "managed:$WORK/res/managed.conf" >/dev/null
+grep -q '"service": "ghost"' "$HAO_STATE_DIR/manifest.json" \
+    && note "manifest 含新记录的服务" || bad "manifest 缺新记录的服务"
+rm -f "$HAO_STATE_DIR/services/ghost.json" "$HAO_STATE_DIR/services/ghost.resources"
+"$STATE" handoff --user "$(id -un)" --skip-agent-files >/dev/null
+grep -q '"service": "ghost"' "$HAO_STATE_DIR/manifest.json" \
+    && bad "handoff 未重建 manifest，已删服务仍留在清单里" \
+    || note "handoff 重建 manifest，已删服务不再出现"
+grep -q '"service": "nginx"' "$HAO_STATE_DIR/manifest.json" \
+    && note "重建后仍在的服务未被误删" || bad "重建 manifest 弄丢了仍在的服务"
+python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$HAO_STATE_DIR/manifest.json" \
+    && note "重建后的 manifest 仍是合法 JSON" || bad "重建后的 manifest 不是合法 JSON"
+
+# ---------- 多实例服务 ID 互不覆盖 ----------
+# site 模块一台机器可以部署多个站点。service ID 带实例标识时两条记录必须共存；
+# 都记成 site 会让先部署的那个静默从状态里消失（drift 从此不检查它）。
+echo "blog conf" > "$WORK/res/site-blog.conf"
+echo "shop conf" > "$WORK/res/site-shop.conf"
+"$STATE" record site-blog installed "managed:$WORK/res/site-blog.conf" >/dev/null
+"$STATE" record site-shop installed "managed:$WORK/res/site-shop.conf" >/dev/null
+if grep -qF "$WORK/res/site-blog.conf" "$HAO_STATE_DIR/services/site-blog.resources" \
+    && grep -qF "$WORK/res/site-shop.conf" "$HAO_STATE_DIR/services/site-shop.resources"; then
+    note "多实例 service ID 的记录共存"
+else
+    bad "多实例 service ID 的记录互相覆盖"
+fi
+[ "$("$STATE" services | grep -c '^site-')" -eq 2 ] \
+    && note "services 同时列出两个站点" || bad "services 未同时列出两个站点"
+# 同一个 service ID 记第二次仍必须是整体替换（这是 record 的既有语义）
+"$STATE" record site-blog installed "managed:$WORK/res/site-shop.conf" >/dev/null
+grep -qF "$WORK/res/site-blog.conf" "$HAO_STATE_DIR/services/site-blog.resources" \
+    && bad "同一 service ID 重记未整体替换" || note "同一 service ID 重记是整体替换"
+
 # ---------- convention ----------
 CONV_FILE="$WORK/conv-AGENTS.md"
 printf '# 已有\n\n保留这行。\n' > "$CONV_FILE"

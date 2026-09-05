@@ -29,6 +29,6 @@ jobs:
           claude plugin validate . --strict
 
   # 注意：references/ 里的部署过程没有自动化测试 —— 散文没法 shellcheck。
-  # 真实安装验证需要一台带 systemd/Docker/UFW 的一次性 Ubuntu VM，
+  # 真实安装验证需要一台带 systemd/Docker 的一次性 Ubuntu VM，
   # 并且需要驱动一个 agent 照过程执行，无法在 CI 里可靠复现。
   # 改动过程文档后请按 README 的「验收」一节手工验证。

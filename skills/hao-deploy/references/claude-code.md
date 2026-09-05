@@ -48,8 +48,9 @@ token 是密钥，走 `hao-secret.sh`，不要读出来拼进 JSON：
     ANTHROPIC_AUTH_TOKEN=@file:/path/to/token.txt
 ```
 
-然后用 node 深合并。敏感值通过**环境变量**传给合并器（不进 argv，argv 对
-同机任意用户可见）：
+然后用 node 深合并。这里必须**深合并**而不能整体渲染，所以 `hao-secret.sh render`
+帮不上忙——这是 `references/safety.md` 里那条例外的唯一场景。取值只经过
+**环境变量**（不进 argv，argv 对同机任意用户可见），也不要 `echo` 出来：
 
 ```bash
 CC_TOKEN="$(sed -n 's/^ANTHROPIC_AUTH_TOKEN=//p' /etc/hao/claude-code.env)" \

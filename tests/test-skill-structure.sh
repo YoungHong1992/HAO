@@ -100,6 +100,21 @@ for doc in "$SKILL_DIR"/references/*.md; do
 done
 [ "$orphan" -eq 0 ] && note "没有孤立的 reference" || fail=1
 
+# ---------- 指向 docs/ 的引用必须存在 ----------
+# references/ 会把用户指向 docs/ 下的指南，plugin.json 也引用过一份不存在的
+# 发布文档。悬空的 docs/ 链接和悬空的 references/ 链接一样会让人扑空。
+missing=0
+while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    if [ ! -f "$ROOT_DIR/$ref" ]; then
+        echo "FAIL 引用了不存在的文档: $ref" >&2
+        missing=1
+    fi
+done < <(grep -rhoE 'docs/[A-Za-z0-9._-]+\.md' \
+    "$SKILL_DIR" "$ROOT_DIR/README.md" "$ROOT_DIR/CLAUDE.md" "$ROOT_DIR/SECURITY.md" \
+    "$ROOT_DIR/.claude-plugin" 2>/dev/null | sort -u)
+[ "$missing" -eq 0 ] && note "指向 docs/ 的引用都存在" || fail=1
+
 # ---------- 三个脚本必须可执行且有帮助 ----------
 for s in hao-guard hao-secret hao-state; do
     script="$SKILL_DIR/scripts/$s.sh"

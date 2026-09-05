@@ -27,12 +27,15 @@ systemctl is-active nginx 2>/dev/null || true       # 是否在跑
 
 ## 2. 系统调优（可独立于 Nginx 安装先做）
 
-三个文件都是独立 drop-in，不要去改系统主配置文件：
+这两个文件都是独立 drop-in，不要去改系统主配置文件：
 
 | 模板 | 目标路径 | 写入后 |
 |---|---|---|
 | `templates/nginx-sysctl-optimize.conf` | `/etc/sysctl.d/99-vps-optimize.conf` | `sysctl -p /etc/sysctl.d/99-vps-optimize.conf` |
 | `templates/nginx-limits-nofile.conf` | `/etc/security/limits.d/90-hao-nofile.conf` | 无需重载，下次登录生效 |
+
+还有第三个 drop-in（`nginx-systemd-limits.conf`）只在装了 Nginx 之后才有意义，
+见第 3 节末尾——`limits.d` 对 systemd 启动的服务不生效。
 
 **BBR 要回读确认**，写进文件不等于生效（内核 < 4.9 会静默失败）：
 

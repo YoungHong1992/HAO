@@ -35,7 +35,7 @@
     {
       "schema_version": 1,
       "managed_by": "HAO",
-      "service": "site",
+      "service": "site-blog",
       "release": "skill",
       "recorded_at": "2026-09-05T14:04:18Z",
       "result": "installed",
@@ -74,7 +74,23 @@
 "$SKILL/scripts/hao-state.sh" handoff
 ```
 
-`handoff` 做两件事：
+### 一个 service ID 只有一条记录
+
+`record` 是**整体替换**，不是追加：同一个 service ID 记第二次，第一次的资源清单
+就没了。所以凡是同一模块可以部署多份的东西，service ID 必须带实例标识：
+
+| 模块 | service ID |
+|---|---|
+| 单例模块（nginx、docker、node、uv、maintenance…） | 模块名本身 |
+| `site`（一台机器可以有多个站点） | `site-<站点ID>`，如 `site-blog` |
+
+都记成 `site` 的后果很隐蔽：先部署的站点从状态里消失，`drift` 从此不检查它的
+nginx 配置和更新脚本，`HANDOFF.md` 里也只剩一行。等到有人手工改坏那个站点
+而 `drift` 一声不响时才会发现。
+
+### handoff 做两件事
+
+`handoff` 做两件事（并顺带重建 `manifest.json`）：
 
 1. 生成 `/var/lib/hao/HANDOFF.md`（当前服务表、凭据路径、接手规则、可用的
    更新命令）；

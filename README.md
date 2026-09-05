@@ -44,11 +44,14 @@ Claude Code。在笔记本上跑这套流程只会把笔记本改坏。
 | `claude-code` | Claude Code CLI + 网关/模型配置 |
 | `git-github` | Git 提交身份、官方 GitHub CLI、独立的授权助手 |
 | `site` | 从 Git 仓库部署静态站或 Node 站，含 Let's Encrypt 证书与更新脚本 |
-| `new-api` | New-API 模型网关（Docker Compose） |
-| `cliproxyapi` | CliproxyAPI 网关（Docker Compose） |
 
 支持系统：Debian 13/12，Ubuntu 26.04/24.04/22.04 LTS。
 验收只在 Ubuntu 上做（见下）。
+
+**不包含具体第三方应用的部署过程。** HAO 只装通用的运维底座，以及从你自己的
+仓库部署站点。要装某个具体应用（模型网关、论坛、面板之类）时，HAO 帮你把
+`docker` + `nginx` 底座和反代证书弄好，应用本身按上游官方文档装——那些应用各有
+自己的初始化流程、默认口令和数据迁移语义，写成通用过程只会给出似是而非的步骤。
 
 ## 交接契约：机器可以扔，知识不能丢
 
@@ -74,13 +77,14 @@ Claude Code。在笔记本上跑这套流程只会把笔记本改坏。
 | `observed` | 仅记录 | 只读 |
 | `secret` | 凭据文件 | 只报路径，永不打印内容 |
 
-随时可以查：
+随时可以查（skill 装在插件缓存里，路径带一段内容哈希，所以别手敲——
+用 `/plugin` 看，或者直接问 agent "这台机器上装了什么"）：
 
 ```bash
-SKILL=~/.claude/plugins/cache/hao-deploy/skills/hao-deploy   # 实际路径见 /plugin
-"$SKILL/scripts/hao-state.sh" services      # 装了什么
-"$SKILL/scripts/hao-state.sh" drift         # 有没有被手工改过
-"$SKILL/scripts/hao-state.sh" credentials   # 凭据文件路径（不含内容）
+SKILL="$(dirname "$(find ~/.claude/plugins/cache -name hao-state.sh | head -1)")"
+"$SKILL/hao-state.sh" services      # 装了什么
+"$SKILL/hao-state.sh" drift         # 有没有被手工改过
+"$SKILL/hao-state.sh" credentials   # 凭据文件路径（不含内容）
 ```
 
 ## 安全底线
@@ -132,7 +136,7 @@ Ubuntu VM 上真跑一遍验证。
 
 只在 Ubuntu 上做验收（26.04 / 24.04 / 22.04 LTS）。Debian 13/12 仍在支持列表里，
 但不作为发布门槛：GitHub 托管的 runner 没有 Debian 镜像，容器也无法真实地
-验证 systemd、Docker 和 UFW。
+验证 systemd 与 Docker。
 
 每次验收用一台全新的一次性 VM，记录：系统镜像与架构、只读检查输出、
 第一次部署结果、第二次部署结果（验证幂等）、`drift` 输出、服务健康检查、
@@ -144,7 +148,8 @@ Ubuntu VM 上真跑一遍验证。
 用户 `/plugin marketplace add YoungHong1992/HAO` 即可，
 插件会被复制进本机 `~/.claude/plugins/cache`。
 
-`plugin.json` 里的 `version` 只是插件打包版本，供插件生态的 semver 校验使用。
+`plugin.json` 里的 `version` 是语义化版本，供插件生态的 semver 校验使用。
+仓库整体就是分发单元，没有单独的发布产物。
 
 ## 许可
 
