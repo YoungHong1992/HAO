@@ -42,8 +42,8 @@ Ubuntu 26.04/24.04/22.04 LTS，别的系统不要硬上。
 | 让我的网站/博客上线 | `nginx` + `site`（node 类型再加 `node`） |
 | 我要一台能跑 AI 工具的机器 | `node` + `uv` + `claude-code` |
 | 我要跑容器化的服务 | `docker`（+ `nginx` 做反代） |
-| 服务器刚买来，先弄安全点 | `maintenance` |
-| 我要在服务器上用 git / GitHub | `git-github` |
+| 服务器刚买来，先弄安全点 | `fail2ban` + `swap` + `journald` |
+| 我要在服务器上用 git / GitHub | `git` + `gh` |
 
 问清缺失的关键信息，一次问完，不要来回挤牙膏。各模块要问什么，看对应的
 reference。**不要替用户猜域名、Git 身份、仓库地址这类东西。**
@@ -72,14 +72,21 @@ reference。**不要替用户猜域名、Git 身份、仓库地址这类东西�
 
 | 模块 | 文档 | 作用 |
 |---|---|---|
-| `maintenance` | `references/maintenance.md` | fail2ban、swap、journald 上限、Docker 日志轮转 |
+| `fail2ban` | `references/fail2ban.md` | SSH 防爆破（自动探测真实 SSH 端口） |
+| `swap` | `references/swap.md` | swap 文件 + 换出倾向调优 |
+| `journald` | `references/journald.md` | 系统日志占用上限 |
 | `nginx` | `references/nginx.md` | Nginx（nginx.org 源，含 HTTP/3）+ 内核调优 |
-| `docker` | `references/docker.md` | Docker Engine + Compose 插件 |
+| `docker` | `references/docker.md` | Docker Engine + Compose 插件 + 容器日志轮转 |
 | `node` | `references/node.md` | 系统级 Node.js LTS（落在 `/usr/bin`） |
 | `uv` | `references/uv.md` | uv Python 管理器 + Python 使用约定 |
 | `claude-code` | `references/claude-code.md` | Claude Code CLI + 网关/模型配置 |
-| `git-github` | `references/git-github.md` | Git 身份、GitHub CLI、授权助手 |
+| `git` | `references/git.md` | Git + 提交身份 |
+| `gh` | `references/gh.md` | GitHub CLI + 授权助手 + gh 操作约定 |
 | `site` | `references/site.md` | 从 Git 仓库部署静态站或 Node 站，含证书 |
+
+**一个工具一个模块。** 用户要的往往是好几个（意图表就是干这个的），但每个模块
+自己是独立的：独立安装、独立 `record`、独立 drift、独立卸载。装三件加固时其中
+一件失败，另外两件照做，如实汇报哪件没成。
 
 另外几份跨模块文档：
 

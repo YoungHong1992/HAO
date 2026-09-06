@@ -595,7 +595,7 @@ EOF
 
 # ==================== convention ====================
 # 把一段约定文本写进本机 AI 助手的指令文件（标记块，幂等）。
-# 供工具类模块复用（uv 的 Python 约定、git-github 的 gh 约定等）。
+# 供工具类模块复用（uv 的 Python 约定、gh 的 GitHub 约定等）。
 # 约定正文从 stdin 读入；marker 决定标记块身份，不同模块互不覆盖。
 cmd_convention() {
     local marker="${1:-}"

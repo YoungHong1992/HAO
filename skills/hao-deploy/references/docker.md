@@ -64,9 +64,61 @@ docker run --rm hello-world     # 真正跑一个容器，比 --version 更有�
 
 ## 4. 日志轮转
 
-Docker 默认不轮转容器日志，磁盘写爆是常见事故。如果这台机器还没做过
-`maintenance`，至少把日志轮转补上——见 `references/maintenance.md` 第 4 节
-（**合并**写入 `daemon.json`，不要整体覆盖）。
+Docker 默认不轮转容器日志，磁盘写爆是常见事故。
+
+**关键：不能整体覆盖 `/etc/docker/daemon.json`。** 里面可能有用户的镜像加速、
+私有仓库、存储驱动配置，覆盖掉会让 Docker 起不来或拉不到镜像。
+
+必须先备份，再**合并**（只改 `log-driver` 和 `log-opts` 两个键）：
+
+```bash
+mkdir -p /etc/docker
+DAEMON=/etc/docker/daemon.json
+[ -f "$DAEMON" ] && cp -a "$DAEMON" "$DAEMON.bak.$(date +%Y%m%d_%H%M%S)"
+
+python3 - "$DAEMON" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+data = {}
+if os.path.exists(path) and os.path.getsize(path) > 0:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)          # 解析失败就抛错，别猜
+if not isinstance(data, dict):
+    raise SystemExit("daemon.json 根节点必须是对象")
+data["log-driver"] = "json-file"
+opts = data.get("log-opts")
+if not isinstance(opts, dict):
+    opts = {}
+opts["max-size"] = "50m"
+opts["max-file"] = "3"
+data["log-opts"] = opts
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
+```
+
+已有 `daemon.json` 不是合法 JSON：**恢复备份并跳过**，把情况告诉用户。
+不要试图修好用户的 JSON。
+
+目标值的权威来源是 `templates/docker-daemon-logrotate.json`。Docker 还没装的
+机器上直接把那份模板写进去也可以，配置会在 Docker 安装后生效。
+
+**重启 Docker 之前看有没有运行中的容器**：
+
+```bash
+docker ps -q 2>/dev/null
+```
+
+有容器在跑就**先问用户**——重启 Docker 会中断所有容器。用户不同意就说明
+「配置已写入，下次重启 Docker 后生效」。**这不是失败**，照实说就行。
+
+验证：
+
+```bash
+cat /etc/docker/daemon.json                        # 用户原有的键还在
+docker info --format '{{.LoggingDriver}}'          # 重启过才会变
+```
 
 ## 5. 把用户加进 docker 组（可选，要讲清风险）
 
@@ -86,6 +138,9 @@ usermod -aG docker "$USER"
     shared:/etc/docker/daemon.json
 "$SKILL/scripts/hao-state.sh" handoff
 ```
+
+`daemon.json` 记 `shared` 而不是 `managed`：我们只改了其中的 `log-driver` /
+`log-opts`，下一个 agent 不能整体重写它。
 
 ## 常见问题
 

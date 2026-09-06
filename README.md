@@ -36,14 +36,21 @@ Claude Code。在笔记本上跑这套流程只会把笔记本改坏。
 
 | 模块 | 内容 |
 |---|---|
-| `maintenance` | fail2ban SSH 防护、swap、journald 日志上限、Docker 日志轮转 |
+| `fail2ban` | SSH 防爆破，自动探测机器真实的 SSH 端口 |
+| `swap` | swap 文件 + 换出倾向调优，小内存机器防 OOM |
+| `journald` | 系统日志占用上限，防止日志写爆根分区 |
 | `nginx` | Nginx（nginx.org 源，含 HTTP/3）+ BBR 与内核调优 |
-| `docker` | Docker Engine + Compose 插件 |
+| `docker` | Docker Engine + Compose 插件 + 容器日志轮转 |
 | `node` | 系统级 Node.js LTS（落在 `/usr/bin`，systemd 服务可用） |
 | `uv` | uv Python 环境管理器 + 写入「一律用 uv」的 agent 约定 |
 | `claude-code` | Claude Code CLI + 网关/模型配置 |
-| `git-github` | Git 提交身份、官方 GitHub CLI、独立的授权助手 |
+| `git` | Git + 提交身份（身份必须你自己给，不会替你猜） |
+| `gh` | 官方 GitHub CLI + 独立的授权助手 |
 | `site` | 从 Git 仓库部署静态站或 Node 站，含 Let's Encrypt 证书与更新脚本 |
+
+**一个工具一个模块。** 你说「服务器刚买的，先弄安全一点」，agent 会装
+`fail2ban` + `swap` + `journald` 三件——但它们各自独立记录、独立检查漂移、
+可以单独卸载，不会绑成一个拆不开的包。
 
 支持系统：Debian 13/12，Ubuntu 26.04/24.04/22.04 LTS。
 验收只在 Ubuntu 上做（见下）。

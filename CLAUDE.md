@@ -45,6 +45,13 @@ follows a procedure in `references/` and the user has confirmed.
   constraints, refusal conditions, and the reasons behind them. This is where the old
   installer scripts went. Cross-module docs: `handoff.md` (state format and the handoff
   contract), `safety.md`, `uninstall.md`.
+- **One module = one tool.** A module that bundles several independent tools cannot be
+  partially installed, drifted, or uninstalled, because `record` replaces a whole
+  service ID at once — the old `maintenance` module (fail2ban + swap + journald + Docker
+  log rotation under one record) is why this rule is written down. Bundling belongs in
+  SKILL.md's intent→module table, which maps one user goal to several modules; it does
+  not belong inside a reference. A reference that installs two things a user could
+  reasonably want separately is a reference that should be two files.
 - **`templates/`** — the authoritative content for every file written to a host
   (nginx configs, systemd units, generated update scripts). Tokens are
   `@@NAME@@`. Templates carrying secrets are rendered with `hao-secret.sh render`, never

@@ -1,45 +1,39 @@
-# git-github —— Git 身份与 GitHub CLI
+# gh —— GitHub CLI 与授权
 
-装 Git + 官方 GitHub CLI（`gh`），配置提交身份，装好授权助手，
-并写「用 gh 操作 GitHub」的 agent 约定。
+装官方 GitHub CLI（`gh`）、装授权助手、写「本机 GitHub 操作一律走 gh」的 agent
+约定。提交身份不在这里，属于 `git`，见 `references/git.md`。
 
-## 0. 这几件事必须问用户，一个都不能猜
+## 0. 这几件事必须问用户
 
 | 要素 | 为什么不能猜 |
 |---|---|
-| Git 显示名 | 会写进每一个 commit，猜错了要改历史 |
-| Git 邮箱 | 同上；且必须是 GitHub 已验证邮箱或 noreply 地址 |
-| 目标系统用户 | 决定配置、SSH 密钥、gh 凭据归谁 |
+| 目标系统用户 | 决定 gh 凭据和 SSH 密钥归谁 |
 | 机器角色（workstation / server） | server 上做个人授权需要额外确认 |
-| 作用域（global / repository） | global 会影响该用户所有仓库 |
-| 授权方式（web / skip） | 服务器部署公开仓库通常该用 skip |
+| 授权方式（web / skip） | 服务器上部署公开仓库通常该用 skip |
 
-**绝不要**从登录名、主机名、仓库历史或 GitHub 账号推断身份。邮箱格式要校验，
-名字里不能有换行。
+server 角色 + web 授权：必须让用户**单独确认一次**「要在这台服务器上绑定个人
+GitHub 账号」。这台机器可能不只他一个人用，而 gh 凭据能读到他名下所有仓库。
+目标用户是 root 时额外警告：凭据和 SSH 密钥都会归 root。
 
-## 1. 前置检查
+## 1. 前置检查（只读）
 
 ```bash
 "$SKILL/scripts/hao-guard.sh" managed-file /usr/local/bin/hao-github-authorize
-command -v git >/dev/null && git --version
 command -v gh >/dev/null && gh --version | head -1
+cat /etc/apt/sources.list.d/github-cli.list 2>/dev/null
 ```
 
 - 授权助手已存在但返回 `foreign` → **拒绝覆盖**，报告路径。
 - 已有 GitHub CLI apt 源但内容不是官方那一行 → **停下**，可能是别人配的。
 
-server 角色 + web 授权：必须让用户单独确认一次
-「要在服务器上绑定个人 GitHub 账号」。这台机器可能不只他一个人用。
-目标用户是 root 时额外警告：凭据和 SSH 密钥都会归 root。
+## 2. 装 gh
 
-## 2. 安装 Git 与 gh
-
-GitHub CLI 的 keyring **必须校验指纹**，不能下载就用：
+keyring **必须校验指纹**，不能下载就用：
 
 ```bash
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq git ca-certificates curl gnupg util-linux
+apt-get install -y -qq ca-certificates curl gnupg util-linux
 
 curl -fsSL --connect-timeout 30 \
     https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /tmp/gh-key.gpg
@@ -54,45 +48,20 @@ gpg --show-keys --with-colons /tmp/gh-key.gpg \
 install -d -m 0755 /etc/apt/keyrings /etc/apt/sources.list.d
 install -m 0644 /tmp/gh-key.gpg /etc/apt/keyrings/githubcli-archive-keyring.gpg
 
-printf '# Managed by HAO\n# Service: git-github\ndeb [arch=%s signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' \
+printf '# Managed by HAO\n# Service: gh\ndeb [arch=%s signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' \
     "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/github-cli.list
 
 apt-get update -qq
 apt-get install -y -qq gh
 ```
 
-指纹不匹配就中止并报告——这可能是中间人或源被换了。
+指纹不匹配就**中止并报告** —— 那可能是中间人，也可能是源被换了。
+不要"先装上再说"。
 
-## 3. 配置提交身份
+## 3. 预备 SSH 密钥（web 授权模式）
 
-以目标用户身份执行（root 直接跑会写到 root 的配置里）：
-
-```bash
-run_as_target() {
-    if [ "$TARGET_USER" = "$(id -un)" ]; then HOME="$TARGET_HOME" "$@"
-    else runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" "$@"; fi
-}
-
-# 先读现有身份
-run_as_target git config --global --get user.name
-run_as_target git config --global --get user.email
-```
-
-**已有身份且与用户给的不一致 → 停下来问**。直接改会让之后的提交换个人，
-用户往往几周后才发现。确认后再写：
-
-```bash
-run_as_target git config --global user.name  "$GIT_NAME"
-run_as_target git config --global user.email "$GIT_EMAIL"
-```
-
-作用域是 repository 就用 `git -C "$REPO_DIR" config --local`，
-并先确认那是个 Git 仓库。
-
-## 4. 预备 SSH 密钥（web 授权模式）
-
-已有密钥就**保持不变**，不要覆盖——覆盖会让用户在其他机器/服务上的
-授权全部失效：
+已有密钥就**保持不变，不要覆盖** —— 覆盖会让用户在其他机器和服务上的授权全部
+失效，而且他不会立刻发现：
 
 ```bash
 [ -f "$TARGET_HOME/.ssh/id_ed25519" ] || [ -f "$TARGET_HOME/.ssh/id_rsa" ] || {
@@ -103,30 +72,31 @@ run_as_target git config --global user.email "$GIT_EMAIL"
 }
 ```
 
-私钥**不上传、不记入清单、不打印**。这一步只准备本地材料。
+`run_as_target` 的定义在 `references/git.md` 第 1 节。私钥**不上传、不记入清单、
+不打印**，这一步只准备本地材料。
 
-## 5. 装授权助手
+## 4. 装授权助手
 
 把 `templates/gh-authorize.sh.tmpl` 逐字安装成
 `/usr/local/bin/hao-github-authorize`（权限 0755，无需替换任何占位符）。
 
-**授权本身不在部署流程里做**，因为它需要用户在浏览器里交互。部署完成后
-告诉用户以目标用户身份运行：
+**授权本身不在部署流程里做**，因为它需要用户在浏览器里交互。部署完成后告诉用户
+以目标用户身份运行：
 
 ```bash
 hao-github-authorize
 ```
 
-助手会做：web/设备码登录（附加 `admin:public_key` 权限）→ 注册 git 凭据助手
-→ 上传公钥 → 验证 `ssh -T git@github.com`。上传失败时它会打印人工添加指引。
+助手会做：web/设备码登录（附加 `admin:public_key` 权限）→ 注册 git 凭据助手 →
+上传公钥 → 验证 `ssh -T git@github.com`。上传失败时它会打印人工添加指引。
 
 **不要代替用户输入凭据**，也不要引导用户创建长期 Personal Access Token。
 
-## 6. 写 agent 约定
+## 5. 写 agent 约定
 
 ```bash
-"$SKILL/scripts/hao-state.sh" convention HAO-GIT-GITHUB --user "$TARGET_USER" <<'EOF'
-## Git / GitHub 操作约定（gh）
+"$SKILL/scripts/hao-state.sh" convention HAO-GH --user "$TARGET_USER" <<'EOF'
+## GitHub 操作约定（gh）
 
 本机 GitHub 操作一律使用官方 GitHub CLI（`gh`），不要手写 GitHub REST/GraphQL
 调用，也不要引导用户创建长期 Personal Access Token：
@@ -147,10 +117,21 @@ hao-github-authorize
 EOF
 ```
 
+## 6. 验证
+
+```bash
+gh --version                                # 必须有输出
+[ -x /usr/local/bin/hao-github-authorize ]  # 助手可执行
+gh auth status || true                      # 未登录是预期的
+```
+
+`gh auth status` 说未登录**不是失败** —— 授权是用户下一步自己要做的事。汇报时
+说清这一点，不要写成"GitHub 已配好"。
+
 ## 7. 记录状态
 
 ```bash
-"$SKILL/scripts/hao-state.sh" record git-github installed \
+"$SKILL/scripts/hao-state.sh" record gh installed \
     managed:/etc/apt/sources.list.d/github-cli.list \
     managed:/etc/apt/keyrings/githubcli-archive-keyring.gpg \
     managed:/usr/local/bin/hao-github-authorize
@@ -162,8 +143,8 @@ SSH 私钥**不进清单**。
 ## 汇报给用户
 
 ```
-目标用户 / 机器角色 / 作用域 / 提交身份（名字和邮箱可以明示）
-git 与 gh 版本
+目标用户 / 机器角色 / 授权方式
+gh 版本
 下一步：以 <目标用户> 身份运行 hao-github-authorize 完成登录
 ```
 
