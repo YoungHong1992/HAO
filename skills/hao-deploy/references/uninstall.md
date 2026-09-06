@@ -76,14 +76,30 @@ certbot delete --cert-name <域名>     # 确认后再删
   `/etc/nginx/conf.d/*.conf`（HAO 写的文件开头有 `# Managed by HAO`，
   用 `hao-guard.sh managed-file` 判断）。删主配置前想清楚：其他站点也靠它。
 - **docker**：`systemctl disable --now docker` 并按需卸包。
-  **注意**：这会影响这台机器上所有容器，不只是 HAO 部署的。
-- **maintenance**：删 `/etc/fail2ban/jail.d/hao-sshd.local`、
-  `/etc/systemd/journald.conf.d/hao.conf`、`/etc/sysctl.d/99-hao-swap.conf`。
-  `daemon.json` 和 `fstab` 是 `shared`，只能改回我们加的那部分，
-  **不要整体删**。swap 要先 `swapoff` 再删文件和 fstab 行。
-- **node / uv / claude-code**：卸包或删二进制。写进 AI 助手指令文件的约定块
-  用标记包裹（`HAO-UV` / `HAO-GIT-GITHUB` / `HAO-HANDOFF`），
-  手工删掉 BEGIN 到 END 之间连同标记本身，块外内容不要动。
+  **注意**：这会影响这台机器上所有容器，不只是 HAO 部署的。日志轮转那部分是
+  `daemon.json` 里的 `log-driver` / `log-opts` 两个键，`shared` 资源，
+  只能改回这两个键，**不要整体删**这个文件。
+- **fail2ban**：删 `/etc/fail2ban/jail.d/hao-sshd.local`，然后
+  `systemctl restart fail2ban`（还想留着 fail2ban）或 `systemctl disable --now fail2ban`
+  并卸包。删掉之后 SSH 就没有防爆破了，说清这一点。
+- **swap**：先 `swapoff /swapfile`（或 `/swapfile.hao`）再删文件，然后删掉
+  `/etc/fstab` 里那一行——**顺序不能颠倒**，先删文件后 swapoff 会让机器起不来。
+  `/etc/fstab` 是 `shared`，只删我们加的那一行。再删
+  `/etc/sysctl.d/99-hao-swap.conf`。内存吃紧的机器上关掉 swap 会让 OOM 回来，
+  先问清楚。
+- **journald**：删 `/etc/systemd/journald.conf.d/hao.conf`，
+  `systemctl restart systemd-journald`。上限没了之后日志会重新按磁盘 10% 增长。
+- **git**：卸包或保留都行。`~/.gitconfig` 是 `shared`——只删我们写的
+  `user.name` / `user.email`（`git config --global --unset`），**不要删整个文件**。
+- **gh**：删 `/usr/local/bin/hao-github-authorize`、
+  `/etc/apt/sources.list.d/github-cli.list`、
+  `/etc/apt/keyrings/githubcli-archive-keyring.gpg`，按需 `apt-get remove gh`。
+  用户的 gh 登录凭据在他自己的 `~/.config/gh/` 下，要不要清由他决定；
+  真要撤销授权得让他自己去 GitHub 的 Settings → Applications 里撤。
+- **node / uv / claude-code**：卸包或删二进制。
+- 写进 AI 助手指令文件的约定块用标记包裹（`HAO-UV` / `HAO-GH` / `HAO-HANDOFF`；
+  旧机器上可能还叫 `HAO-GIT-GITHUB`），手工删掉 BEGIN 到 END 之间连同标记本身，
+  块外内容不要动。
 
 ## 清理 HAO 状态
 

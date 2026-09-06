@@ -3,6 +3,61 @@
 HAO 通过插件市场分发（`.claude-plugin/marketplace.json`）。
 `plugin.json` 里的 `version` 是语义化版本，供插件生态的 semver 校验使用。
 
+## 0.5.0（未发布）—— 一个工具一个模块
+
+`maintenance` 把 fail2ban、swap、journald 上限、Docker 日志轮转四件事塞进一个模块，
+`git-github` 把 Git 和 GitHub CLI 塞进一个模块。文档自己都写着"四件事互相独立"，
+但状态记录不是独立的：`record` 按 service ID **整体替换**，四件事共用一条
+`maintenance` 记录，于是没法单独查漂移、没法只卸载其中一件、用户只想加个 swap 也
+要读一份讲 fail2ban 和 Docker 的文档。
+
+### 破坏性变更：模块拆分
+
+| 旧模块 | 拆成 |
+|---|---|
+| `maintenance` | `fail2ban`、`swap`、`journald`，Docker 日志轮转并入 `docker` |
+| `git-github` | `git`、`gh` |
+
+模块数 8 → 11。捆绑关系上移到 `SKILL.md` 的意图映射表：用户说"服务器刚买来先弄
+安全点"，agent 仍然一次装齐 `fail2ban` + `swap` + `journald`，但三者各记一条状态。
+
+### 破坏性变更：service ID、模板名、约定标记
+
+| 类别 | 旧 | 新 |
+|---|---|---|
+| service ID | `maintenance` | `fail2ban` / `swap` / `journald` |
+| service ID | `git-github` | `git` / `gh` |
+| 模板 | `maintenance-fail2ban-sshd.local` | `fail2ban-sshd.local` |
+| 模板 | `maintenance-journald.conf` | `journald.conf` |
+| 模板 | `maintenance-swap-sysctl.conf` | `swap-sysctl.conf` |
+| `# Service:` 头 | `maintenance` / `git-github` | 对应的新模块名 |
+| 约定标记 | `HAO-GIT-GITHUB` | `HAO-GH` |
+
+**不提供自动迁移。** 旧机器上的 `services/maintenance.json`、`git-github.json`
+保持原样，主机上的文件路径一个都没变（只有文件里的 `# Service:` 注释头和新记录
+对不上，不影响 `hao-guard.sh` 判归属——它只看 `Managed by HAO`）。接手旧机器的
+处理步骤写进了 `references/handoff.md`「碰到已经不存在的模块名」：按新模块重新
+`record`，确认之后再删旧记录，顺序不能颠倒。
+
+约定标记改名有一个具体后果：`write_marker_block` 以标记名为块身份，所以旧机器上
+`<!-- HAO-GIT-GITHUB -->` 那个块不会被 `convention HAO-GH` 替换，会**多出一个块**，
+需要手工删掉旧的。同样写在 `handoff.md` 里。
+
+### 拆分时补上的东西
+
+- `swap.md` 说明了为什么 swap 文件本身不进状态记录：`drift` 对记录里每个路径算
+  sha256，几 GB 的 swap 文件既算不动、内容也时刻在变，记进去等于永久报漂移。
+  旧文档只是没记，没说为什么。
+- `journald.md` 的验证改成 `systemd-analyze cat-config`，能看出有没有别的 drop-in
+  排在后面把我们的值覆盖了；`cat` 我们自己写的文件看不出这个。
+- `git.md` 强调回读身份也必须走 `run_as_target`——以 root 读出来的是 root 的配置，
+  那不是证据。
+- `docker.md` 拿到了完整的日志轮转过程（合并而非覆盖 `daemon.json`、JSON 非法就
+  恢复备份、重启前检查运行中的容器），不再指向别的文档。
+- 「不顺手 `apt upgrade` 全系统」原来挂在 `maintenance.md` 上，属于跨模块约束，
+  移进 `safety.md` 的「不该做的事」。
+- `CLAUDE.md` 写下"一个模块一个工具"这条不变量，以及它的理由。
+
 ## 0.4.0（未发布）—— 主机布局改成业内通用形式，证书换 certbot
 
 部署结果原来只有 HAO 自己认识：`/var/www/hao-sites/<id>`、`/opt/hao-sites/<id>`、

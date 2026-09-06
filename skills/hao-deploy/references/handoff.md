@@ -104,7 +104,7 @@ vhost 在 `/etc/nginx`、单元文件在 `/etc/systemd/system`、apt 源在 `/et
 
 | 模块 | service ID |
 |---|---|
-| 单例模块（nginx、docker、node、uv、maintenance…） | 模块名本身 |
+| 单例模块（nginx、docker、node、uv、fail2ban…） | 模块名本身 |
 | `site`（一台机器可以有多个站点） | `site-<站点ID>`，如 `site-blog` |
 
 都记成 `site` 的后果很隐蔽：先部署的站点从状态里消失，`drift` 从此不检查它的
@@ -146,6 +146,44 @@ cat /var/lib/hao/HANDOFF.md                      # 先读这个
 直接覆盖会静默丢掉那些改动——这类丢失通常几周后才被发现。
 
 `drift` 退出码：0 = 无漂移，非 0 = 有漂移。
+
+### 碰到已经不存在的模块名
+
+早期版本把多个工具打包成一个模块，所以旧机器上可能有这些 service ID：
+
+| 旧 service ID | 现在对应的模块 |
+|---|---|
+| `maintenance` | `fail2ban` + `swap` + `journald`，Docker 日志轮转归 `docker` |
+| `git-github` | `git` + `gh` |
+
+**没有自动迁移**，也不要就着旧 ID 继续 `record` —— 那会让状态里同时存在两套命名，
+下一个 agent 无从判断哪个是真的。碰到时这样处理：
+
+```bash
+# 1. 先看旧记录里都有什么资源，按新模块归类
+cat /var/lib/hao/services/maintenance.resources
+
+# 2. 按新模块各记一条（路径照旧记录里的，别凭记忆写）
+"$SKILL/scripts/hao-state.sh" record fail2ban installed managed:/etc/fail2ban/jail.d/hao-sshd.local
+"$SKILL/scripts/hao-state.sh" record journald installed managed:/etc/systemd/journald.conf.d/hao.conf
+"$SKILL/scripts/hao-state.sh" record swap     installed managed:/etc/sysctl.d/99-hao-swap.conf shared:/etc/fstab
+
+# 3. 确认新记录都在了，再删旧的
+rm -f /var/lib/hao/services/maintenance.json \
+      /var/lib/hao/services/maintenance.resources \
+      /var/lib/hao/services/maintenance.intent
+"$SKILL/scripts/hao-state.sh" handoff
+```
+
+顺序不能颠倒：先记新的再删旧的，中途失败也不会丢掉资源清单。
+
+主机上的文件本身**不用动**（路径没变，只是归属记录换了名字），但那几个文件的
+`# Service: maintenance` 注释头会和新记录对不上。`hao-guard.sh` 判归属只看
+`Managed by HAO`，所以不影响拒绝覆盖的保证；重写那个文件时顺手把头改对即可。
+
+`git-github` 还多一件事：agent 指令文件里的 `<!-- HAO-GIT-GITHUB BEGIN/END -->`
+块不会被 `convention HAO-GH` 替换（标记名就是块的身份），所以会**多出一个块**。
+手工删掉旧的那个，从 BEGIN 到 END 连同标记一起删，块外内容不要动。
 
 ## 机器销毁后还剩什么
 

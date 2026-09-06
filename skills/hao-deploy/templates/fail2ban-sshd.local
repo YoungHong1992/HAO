@@ -1,5 +1,5 @@
 # Managed by HAO
-# Service: maintenance
+# Service: fail2ban
 # 目标路径: /etc/fail2ban/jail.d/hao-sshd.local
 #
 # @@SSH_PORTS@@ 必须是这台机器**实际**的 SSH 端口，不能写死 22。
