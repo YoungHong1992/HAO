@@ -1,21 +1,30 @@
 # Managed by HAO
 # Service: site
 # HAO-SITE: @@SITE_ID@@
-# 目标路径: /etc/systemd/system/hao-site-@@SITE_ID@@.service
+# 目标路径: /etc/systemd/system/@@SITE_ID@@.service
 # 权限必须是 0640：@@EXTRA_ENV@@ 可能带敏感值，不能让普通用户读到。
 # systemd 以 root 运行，0640 不影响它读取。
-# 写入后: systemctl daemon-reload && systemctl enable --now hao-site-@@SITE_ID@@.service
+# 写入后: systemctl daemon-reload && systemctl enable --now @@SITE_ID@@.service
+#
+# ⚠️ 单元名不带前缀（业内通行命名），所以写入前**必须**先跑
+#     hao-guard.sh unit-free @@SITE_ID@@
+# 非 free、也不是本站点自己的，一律停下 —— /etc/systemd/system/<name>.service
+# 会静默覆盖 /usr/lib/systemd/system/ 下的同名单元。
+#
+# @@NODE_BIN@@ 必须是 /usr/bin/node。落在 /home 下的 node（nvm、各类
+# 版本管理器）对 systemd 不可见，也可能随用户目录被清理而消失 ——
+# 见 references/node.md 开头记录的那次事故。
 #
 # @@EXTRA_ENV@@ 是可选的额外环境变量，每行一条 Environment="KEY=VALUE"，
 # 放在 PORT 之后，因此同名时用户值覆盖默认值。不要在这里设 PORT。
 [Unit]
-Description=HAO Site: @@SITE_ID@@ (node)
+Description=@@SITE_ID@@ (Node.js application, deployed by HAO)
 After=network.target
 
 [Service]
 Type=simple
 User=@@TARGET_USER@@
-WorkingDirectory=/opt/hao-sites/@@SITE_ID@@
+WorkingDirectory=/opt/@@SITE_ID@@
 ExecStart=@@NODE_BIN@@ @@START_FILE@@ @@PORT@@
 Restart=always
 RestartSec=10s

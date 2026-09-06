@@ -2,7 +2,7 @@
 # Managed by HAO
 # Service: site
 # HAO-SITE: @@SITE_ID@@
-# 目标路径: /usr/local/bin/hao-site-update-@@SITE_ID@@ （权限 0755）
+# 目标路径: /usr/local/bin/@@SITE_ID@@-update （权限 0755）
 #
 # node 站点更新脚本：拉取最新代码 -> 重启服务 -> 等端口就绪 -> 重载 Nginx。
 # 脚本内嵌所有解析后的字面量，不依赖 HAO skill 或本仓库，可独立运行。
@@ -11,17 +11,17 @@
 set -euo pipefail
 
 SITE_ID='@@SITE_ID@@'
-CLONE_DIR='/opt/hao-sites/@@SITE_ID@@'
+CLONE_DIR='/opt/@@SITE_ID@@'
 BRANCH='@@BRANCH@@'
 TARGET_USER='@@TARGET_USER@@'
 TARGET_HOME='@@TARGET_HOME@@'
-UNIT_NAME='hao-site-@@SITE_ID@@.service'
+UNIT_NAME='@@SITE_ID@@.service'
 PORT='@@PORT@@'
 
-log() { printf '[hao-site-update-%s] %s\n' "$SITE_ID" "$*"; }
+log() { printf '[%s-update] %s\n' "$SITE_ID" "$*"; }
 
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
-    echo "[ERROR] 请使用 root 权限运行: sudo hao-site-update-$SITE_ID" >&2
+    echo "[ERROR] 请使用 root 权限运行: sudo $SITE_ID-update" >&2
     exit 1
 fi
 

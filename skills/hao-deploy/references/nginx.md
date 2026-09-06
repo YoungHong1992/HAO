@@ -92,18 +92,23 @@ id -u nginx >/dev/null 2>&1 || useradd --system --no-create-home \
 ## 4. 目录与主配置
 
 ```bash
-mkdir -p /etc/nginx/ssl /var/log/nginx /var/www/acme
-chown root:root /etc/nginx/ssl /var/log/nginx
-chmod 755 /etc/nginx/ssl /var/log/nginx /var/www/acme
-
-# 私钥必须 600，证书 644
-find /etc/nginx/ssl -type d -exec chmod 755 {} + 2>/dev/null || true
-find /etc/nginx/ssl -type f -name 'key.pem' -exec chmod 600 {} + 2>/dev/null || true
-find /etc/nginx/ssl -type f -name 'fullchain.pem' -exec chmod 644 {} + 2>/dev/null || true
+mkdir -p /etc/nginx/snippets /var/log/nginx /var/www/html
+chown root:root /etc/nginx/snippets /var/log/nginx
+chmod 755 /etc/nginx/snippets /var/log/nginx /var/www/html
 
 mkdir -p /var/cache/nginx/{client_temp,proxy_temp,fastcgi_temp,uwsgi_temp,scgi_temp}
 chown -R nginx:nginx /var/cache/nginx
 ```
+
+`/etc/nginx/snippets/` 是 Debian nginx 的目录约定，nginx.org 的包不建它，要自己建。
+共享片段和每站点内容块都放这里——**运维人员会去这个目录找**。
+
+`/var/www/html` 是 nginx.org 包的默认 docroot，同时用作 certbot 的 ACME webroot
+（见 `references/site.md` 第 4 节）。
+
+证书目录**不由 HAO 创建**：真实证书归 certbot 管（`/etc/letsencrypt/`，它自己会建
+并设好权限），自签名兜底走 Debian 标准的 `/etc/ssl/certs` + `/etc/ssl/private`。
+HAO 不再有自己的 `/etc/nginx/ssl`。
 
 写主配置前**先备份**：
 
@@ -115,10 +120,15 @@ chown -R nginx:nginx /var/cache/nginx
 然后写三个文件：
 
 - `templates/nginx.conf` → `/etc/nginx/nginx.conf`
-- `templates/nginx-ssl-params.conf` → `/etc/nginx/hao-ssl-params.conf`
-- `templates/nginx-acme-location.conf` → `/etc/nginx/hao-acme-location.conf`
+- `templates/nginx-ssl-hardening.conf` → `/etc/nginx/snippets/ssl-hardening.conf`
+- `templates/nginx-acme-location.conf` → `/etc/nginx/snippets/acme-challenge.conf`
 
 后两个是共享片段，被各站点 `include`，只写一份。
+
+`ssl-hardening.conf` 里**只有 HSTS**。协议版本、密码套件、会话缓存那些交给
+certbot 自带的 `/etc/letsencrypt/options-ssl-nginx.conf`——它随 certbot 升级，
+而且比 HAO 以前那份好（HAO 旧模板里还留着 `3DES`，`ssl_session_tickets` 也是
+`on`，不利于前向保密）。两处都写会让人不知道哪个生效。
 
 ## 5. 测试与启动（顺序不能反）
 
@@ -141,8 +151,8 @@ sysctl -n net.ipv4.tcp_congestion_control
 
 "$SKILL/scripts/hao-state.sh" record nginx installed \
     managed:/etc/nginx/nginx.conf \
-    managed:/etc/nginx/hao-ssl-params.conf \
-    managed:/etc/nginx/hao-acme-location.conf \
+    managed:/etc/nginx/snippets/ssl-hardening.conf \
+    managed:/etc/nginx/snippets/acme-challenge.conf \
     managed:/etc/sysctl.d/99-vps-optimize.conf \
     managed:/etc/security/limits.d/90-hao-nofile.conf \
     managed:/etc/systemd/system/nginx.service.d/limits.conf \

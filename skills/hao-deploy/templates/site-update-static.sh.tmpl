@@ -2,7 +2,7 @@
 # Managed by HAO
 # Service: site
 # HAO-SITE: @@SITE_ID@@
-# 目标路径: /usr/local/bin/hao-site-update-@@SITE_ID@@ （权限 0755）
+# 目标路径: /usr/local/bin/@@SITE_ID@@-update （权限 0755）
 #
 # static 站点更新脚本：拉取最新代码 -> 构建 -> 发布 -> 重载 Nginx。
 # 脚本内嵌所有解析后的字面量，不依赖 HAO skill 或本仓库，可独立运行。
@@ -11,22 +11,23 @@
 #   - @@BUILD_CMD@@ 若为空，构建步骤自动跳过。
 #   - 值里若含单引号，必须写成 '\'' 转义形式，否则生成的脚本语法错误。
 #   - @@OUTPUT_DIR@@ 为 "." 时会发布仓库根目录，并自动排除 .git。
+#   - @@DOCROOT@@ = /var/www/<域名>，无域名时 /var/www/<站点ID>。
 set -euo pipefail
 
 SITE_ID='@@SITE_ID@@'
-CLONE_DIR='/opt/hao-sites/@@SITE_ID@@'
+CLONE_DIR='/opt/@@SITE_ID@@'
 BRANCH='@@BRANCH@@'
 TARGET_USER='@@TARGET_USER@@'
 TARGET_GROUP='@@TARGET_GROUP@@'
 TARGET_HOME='@@TARGET_HOME@@'
 BUILD_CMD='@@BUILD_CMD@@'
 OUTPUT_DIR='@@OUTPUT_DIR@@'
-WEB_DIR='/var/www/hao-sites/@@SITE_ID@@'
+WEB_DIR='@@DOCROOT@@'
 
-log() { printf '[hao-site-update-%s] %s\n' "$SITE_ID" "$*"; }
+log() { printf '[%s-update] %s\n' "$SITE_ID" "$*"; }
 
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
-    echo "[ERROR] 请使用 root 权限运行: sudo hao-site-update-$SITE_ID" >&2
+    echo "[ERROR] 请使用 root 权限运行: sudo $SITE_ID-update" >&2
     exit 1
 fi
 

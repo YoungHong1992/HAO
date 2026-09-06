@@ -530,7 +530,7 @@ EOF
    下一个接手的 agent 读到不可信的记录。
 5. **root 操作要确认**：安装包、启用服务、改 Nginx/systemd 之前，
    先把将要发生的变更讲清楚并取得用户确认。
-6. **站点更新用生成的脚本**：`/usr/local/bin/hao-site-update-<id>`，
+6. **站点更新用生成的脚本**：`/usr/local/bin/<站点ID>-update`，
    不要手工重复 clone/build/publish 流程。
 7. **部署新东西后补记意图**：`hao-state.sh intent <service> key=value ...`，
    然后提醒用户把 `DEPLOY-INTENT.md` 存到他自己的笔记里。那份文件是这台机器
@@ -539,9 +539,12 @@ EOF
 ## 这台机器上可用的更新命令
 
 EOF
+        # 更新脚本用通用命名 <id>-update，所以 glob 会撞上和 HAO 无关的脚本。
+        # 靠脚本里的 `# Managed by HAO` 头筛一遍 —— 与 hao-guard.sh 同一个判据。
         local script found=0
-        for script in /usr/local/bin/hao-site-update-*; do
+        for script in /usr/local/bin/*-update; do
             [ -x "$script" ] || continue
+            head -n 12 "$script" 2>/dev/null | grep -q 'Managed by HAO' || continue
             echo "    sudo $(basename "$script")"
             found=$((found + 1))
         done

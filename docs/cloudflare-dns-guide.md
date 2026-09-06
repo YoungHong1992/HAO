@@ -107,8 +107,15 @@ dig +short your-domain.com
 
 1. 在 Cloudflare **SSL/TLS → Origin Server** 中创建证书
 2. 下载证书和私钥
-3. 放到 `/etc/nginx/ssl/{domain}/` 目录
-4. 将 Cloudflare SSL 模式设为 **Full (strict)**
+3. 放到 Debian 的标准位置：证书 `/etc/ssl/certs/<域名>.pem`（权限 644），
+   私钥 `/etc/ssl/private/<域名>.key`（权限 600）
+4. 改 vhost 里的 `ssl_certificate` / `ssl_certificate_key` 指向这两个文件，
+   并**删掉** `options-ssl-nginx.conf` 与 `ssl-dhparams.pem` 两行 include
+   （那是 certbot 提供的，不签发就不存在）
+5. 将 Cloudflare SSL 模式设为 **Full (strict)**
+
+用 Origin Certificate 就不要再让 certbot 签发同一个域名了，两套证书并存只会
+让人搞不清哪张在生效。
 
 ### 4. 多个子域名可以用通配符吗？
 
@@ -120,14 +127,14 @@ dig +short your-domain.com
 
 用 `site` 组件部署的站点如果要开启 Cloudflare 橙云代理（Proxied），按以下顺序操作：
 
-1. **申请证书时保持灰云（DNS only）**：`site` 通过 acme.sh webroot 申请 Let's Encrypt 证书，需要 CA 直接访问源站 80 端口；签发成功后再切回橙云。
+1. **申请证书时保持灰云（DNS only）**：`site` 用 certbot 的 webroot 方式申请 Let's Encrypt 证书，需要 CA 直接访问源站 80 端口；签发成功后再切回橙云。
 2. **SSL/TLS 模式设为 Full (strict)**：橙云回源走 HTTPS，源站持有真实证书时选择 **SSL/TLS → Full (strict)**；不要选 Flexible——HTTP 回源会与源站的 80→443 跳转形成循环。
-3. **源站安全组放行 443/TCP**：`site` 默认开启 80→443 跳转（`HAO_SITE_<ID>_REDIRECT=yes`）。Full (strict) 回源要求源站 443 可达，安全组未放行时整站表现为 522 超时。
+3. **源站安全组放行 443/TCP**：`site` 在拿到真实证书、且你确认 443 已放行之后会开启 80→443 跳转。Full (strict) 回源要求源站 443 可达，安全组未放行时整站表现为 522 超时。
 
-何时使用 `HAO_SITE_<ID>_REDIRECT=no`：
+什么时候该让 agent 不开跳转：
 
 - 源站安全组暂时不能放行 443，需要 80 端口直接提供站点内容；
-- 使用自签名证书或不申请证书（此时模块本就不会跳转，`REDIRECT=no` 只是显式声明）；
+- 使用自签名证书或不申请证书（这种情况 agent 本来就不会开跳转）；
 - 调试阶段需要绕过 HTTPS 直接验证源站。
 
 > 橙云（代理开启）模式下 `dig` / `getent hosts` 返回的是 Cloudflare 边缘节点 IP
@@ -136,4 +143,4 @@ dig +short your-domain.com
 
 ---
 
-**最后更新**: 2026-09-04
+**最后更新**: 2026-09-06

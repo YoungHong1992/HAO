@@ -27,7 +27,8 @@ server {
     server_name legacy.example.com;
 }
 EOF
-cat > "$WORK/confd/hao-site-blog.conf" <<'EOF'
+# 文件名是通用形式（按域名，无 hao- 前缀）—— 归属必须仍能从文件内容认出来。
+cat > "$WORK/confd/blog.example.com.conf" <<'EOF'
 # Managed by HAO
 # Service: site
 # HAO-SITE: blog
@@ -50,7 +51,7 @@ check "vhost-owner 未占用" \
 check "vhost-owner 非 HAO 配置占用" \
     "foreign $WORK/confd/foreign.conf" "$("$GUARD" vhost-owner legacy.example.com "$WORK/confd")"
 check "vhost-owner HAO site 占用" \
-    "hao-site blog $WORK/confd/hao-site-blog.conf" \
+    "hao-site blog $WORK/confd/blog.example.com.conf" \
     "$("$GUARD" vhost-owner blog.example.com "$WORK/confd")"
 check "vhost-owner 其他 HAO 服务占用" \
     "hao some-other-service $WORK/confd/hao-other.conf" \
@@ -63,7 +64,7 @@ check "vhost-owner conf 目录不存在" \
 
 # ---------- managed-file ----------
 check "managed-file 不存在" "missing" "$("$GUARD" managed-file "$WORK/nope.conf")"
-check "managed-file HAO 管理" "managed site" "$("$GUARD" managed-file "$WORK/confd/hao-site-blog.conf")"
+check "managed-file HAO 管理" "managed site" "$("$GUARD" managed-file "$WORK/confd/blog.example.com.conf")"
 check "managed-file 非 HAO" "foreign" "$("$GUARD" managed-file "$WORK/confd/foreign.conf")"
 
 # ---------- cert-issuer ----------
@@ -117,6 +118,71 @@ ExecStart=/usr/bin/node server.js 8137
 EOF
 check "unit-port 读回端口" "8137" "$("$GUARD" unit-port "$WORK/unit.service")"
 check "unit-port 单元不存在" "" "$("$GUARD" unit-port "$WORK/nounit.service")"
+
+# ---------- unit-free ----------
+# 站点单元用通用命名 <id>.service，于是 /etc/systemd/system/<name>.service 会
+# 静默覆盖发行版的同名单元。这个检查是唯一的拦阻，不能失灵。
+mkdir -p "$WORK/units-etc" "$WORK/units-lib"
+cat > "$WORK/units-lib/nginx.service" <<'EOF'
+[Unit]
+Description=nginx from the distro
+EOF
+cat > "$WORK/units-etc/blog.service" <<'EOF'
+# Managed by HAO
+# Service: site
+# HAO-SITE: blog
+[Unit]
+Description=blog
+EOF
+cat > "$WORK/units-etc/gateway.service" <<'EOF'
+# Managed by HAO
+# Service: gateway
+[Unit]
+Description=gateway
+EOF
+
+UNIT_DIRS="$WORK/units-etc:$WORK/units-lib"
+check "unit-free 名字未被占用" \
+    "free" "$(HAO_UNIT_DIRS="$UNIT_DIRS" "$GUARD" unit-free brand-new)"
+check "unit-free 发行版单元必须拒绝" \
+    "foreign $WORK/units-lib/nginx.service" \
+    "$(HAO_UNIT_DIRS="$UNIT_DIRS" "$GUARD" unit-free nginx)"
+check "unit-free 本站点自己的单元" \
+    "hao-site blog $WORK/units-etc/blog.service" \
+    "$(HAO_UNIT_DIRS="$UNIT_DIRS" "$GUARD" unit-free blog)"
+check "unit-free 别的 HAO 单元" \
+    "hao gateway $WORK/units-etc/gateway.service" \
+    "$(HAO_UNIT_DIRS="$UNIT_DIRS" "$GUARD" unit-free gateway)"
+# 带不带 .service 后缀都要一致
+check "unit-free 接受带后缀的名字" \
+    "hao-site blog $WORK/units-etc/blog.service" \
+    "$(HAO_UNIT_DIRS="$UNIT_DIRS" "$GUARD" unit-free blog.service)"
+# /etc 覆盖 /lib：同名时必须报 /etc 那份（那才是生效的，也是我们要写的位置）
+cat > "$WORK/units-etc/nginx.service" <<'EOF'
+# Managed by HAO
+# Service: nginx
+[Unit]
+Description=overridden
+EOF
+check "unit-free 优先报 /etc 下的覆盖文件" \
+    "hao nginx $WORK/units-etc/nginx.service" \
+    "$(HAO_UNIT_DIRS="$UNIT_DIRS" "$GUARD" unit-free nginx)"
+if "$GUARD" unit-free "../escape" >/dev/null 2>&1; then
+    echo "FAIL unit-free 未拒绝带路径分隔符的名字" >&2
+    fail=1
+else
+    echo "ok   unit-free 拒绝带路径分隔符的名字"
+fi
+# 真实系统上必须认出发行版的 nginx.service（不走 HAO_UNIT_DIRS）
+if command -v systemctl >/dev/null 2>&1 \
+    && [ -n "$(systemctl list-unit-files nginx.service --no-legend 2>/dev/null)" ]; then
+    case "$("$GUARD" unit-free nginx)" in
+        foreign*) echo "ok   unit-free 在真实系统上认出发行版 nginx.service" ;;
+        *) echo "FAIL unit-free 未认出真实的 nginx.service" >&2; fail=1 ;;
+    esac
+else
+    echo "skip unit-free 真实系统用例（本机没有 nginx.service）"
+fi
 
 # ---------- os-supported ----------
 printf 'ID=ubuntu\nVERSION_ID="24.04"\n' > "$WORK/os-ok"

@@ -15,6 +15,7 @@
 #   hao-guard.sh cert-issuer <fullchain.pem>
 #   hao-guard.sh repo-identity <dir> <expected_remote>
 #   hao-guard.sh port-free <port>
+#   hao-guard.sh unit-free <unit_name>
 #   hao-guard.sh unit-port <unit_file>
 #   hao-guard.sh os-supported
 
@@ -23,6 +24,25 @@ set -euo pipefail
 die() {
     echo "hao-guard: $*" >&2
     exit 1
+}
+
+# ==================== 归属分类（共用） ====================
+# 从文件的注释头判断归属，输出「状态词 + 路径」。nginx 配置和 systemd 单元
+# 共用这一套判断 —— 两者都靠模板里的 `# Managed by HAO` / `# HAO-SITE:` 头。
+# 靠文件内容而不是文件名，所以主机上的路径和文件名可以是完全通用的形式。
+classify_hao_file() {
+    local path="$1" site_id service
+    site_id="$(sed -n 's/^# HAO-SITE: \(.*\)$/\1/p' "$path" 2>/dev/null | head -1)"
+    if [ -n "$site_id" ]; then
+        echo "hao-site $site_id $path"
+        return 0
+    fi
+    if head -n 12 "$path" 2>/dev/null | grep -q 'Managed by HAO'; then
+        service="$(sed -n 's/^# Service: \(.*\)$/\1/p' "$path" 2>/dev/null | head -1)"
+        echo "hao ${service:-unknown} $path"
+        return 0
+    fi
+    echo "foreign $path"
 }
 
 # ==================== vhost-owner ====================
@@ -41,7 +61,7 @@ cmd_vhost_owner() {
         return 0
     fi
 
-    local conf site_id service
+    local conf
     while IFS= read -r -d '' conf; do
         # 逐 token 扫描 server_name 指令，避免子串误命中
         if awk -v domain="$server_name" '
@@ -57,17 +77,7 @@ cmd_vhost_owner() {
             }
             END { exit found ? 0 : 1 }
         ' "$conf"; then
-            site_id="$(sed -n 's/^# HAO-SITE: \(.*\)$/\1/p' "$conf" | head -1)"
-            if [ -n "$site_id" ]; then
-                echo "hao-site $site_id $conf"
-                return 0
-            fi
-            if head -n 12 "$conf" 2>/dev/null | grep -q 'Managed by HAO'; then
-                service="$(sed -n 's/^# Service: \(.*\)$/\1/p' "$conf" | head -1)"
-                echo "hao ${service:-unknown} $conf"
-                return 0
-            fi
-            echo "foreign $conf"
+            classify_hao_file "$conf"
             return 0
         fi
     done < <(find "$conf_dir" -maxdepth 1 -type f -name '*.conf' -print0 2>/dev/null)
@@ -167,8 +177,63 @@ cmd_port_free() {
     fi
 }
 
+# ==================== unit-free ====================
+# 站点单元用通用命名 `<id>.service`（不带 hao- 前缀），于是多了一个风险：
+# /etc/systemd/system/<name>.service 会**静默覆盖**
+# /usr/lib/systemd/system/<name>.service。站点 ID 叫 nginx / cron / ssh
+# 这类名字就会顶掉发行版的单元，而且不会有任何报错。写单元前必须先问这里。
+#   free                     没有同名 unit，可以写
+#   hao-site <id> <path>     本站点自己的单元，可原地更新
+#   hao <service> <path>     别的 HAO 单元 -> 停
+#   foreign <path>           发行版或别人的单元 -> 停，绝不覆盖
+cmd_unit_free() {
+    local name="${1:-}"
+    [ -n "$name" ] || die "unit-free 需要 <unit_name>"
+    case "$name" in
+        */*) die "unit 名不能包含路径分隔符: $name" ;;
+    esac
+    case "$name" in
+        *.service) ;;
+        *) name="${name}.service" ;;
+    esac
+
+    # HAO_UNIT_DIRS 供测试覆盖；默认是 systemd 的标准搜索位置，/etc 在最前
+    # —— 那既是 override 生效的地方，也是我们要写入的地方。
+    local -a dirs=()
+    IFS=':' read -ra dirs \
+        <<< "${HAO_UNIT_DIRS:-/etc/systemd/system:/run/systemd/system:/usr/lib/systemd/system:/lib/systemd/system}"
+
+    local d path=""
+    for d in "${dirs[@]}"; do
+        [ -n "$d" ] || continue
+        if [ -f "$d/$name" ]; then
+            path="$d/$name"
+            break
+        fi
+    done
+
+    # 目录里没找到，再问 systemd：它还知道 alias、generator 生成的单元、
+    # 以及被 mask 的单元 —— 这些都不能当成「可用」。
+    if [ -z "$path" ] && [ -z "${HAO_UNIT_DIRS:-}" ] && command -v systemctl >/dev/null 2>&1; then
+        if [ -n "$(systemctl list-unit-files "$name" --no-legend 2>/dev/null | awk 'NR==1{print $1}')" ]; then
+            path="$(systemctl show -p FragmentPath --value "$name" 2>/dev/null)"
+            # systemd 说存在，却拿不到可读的单元文件（mask 到 /dev/null、
+            # 或由 generator 动态生成）—— 保守起见按「别人的」处理。
+            if [ -z "$path" ] || [ ! -f "$path" ]; then
+                echo "foreign ${path:-$name}"
+                return 0
+            fi
+        fi
+    fi
+
+    if [ -z "$path" ]; then
+        echo "free"
+        return 0
+    fi
+    classify_hao_file "$path"
+}
+
 # ==================== unit-port ====================
-# 从既有 systemd 单元里读回端口，保证重跑时不换端口（幂等）。
 # 输出端口号，或在读不到时输出空行。
 cmd_unit_port() {
     local unit="${1:-}"
@@ -197,7 +262,7 @@ cmd_os_supported() {
 
 # ==================== 分派 ====================
 usage() {
-    sed -n '3,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '4,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-}" in
@@ -206,6 +271,7 @@ case "${1:-}" in
     cert-issuer)   shift; cmd_cert_issuer "$@" ;;
     repo-identity) shift; cmd_repo_identity "$@" ;;
     port-free)     shift; cmd_port_free "$@" ;;
+    unit-free)     shift; cmd_unit_free "$@" ;;
     unit-port)     shift; cmd_unit_port "$@" ;;
     os-supported)  shift; cmd_os_supported "$@" ;;
     -h|--help|"")  usage ;;

@@ -19,7 +19,7 @@ cat /var/lib/hao/manifest.json
 ## Docker Compose 类服务
 
 ```bash
-cd /opt/docker-services/<service>
+cd /opt/<service>
 docker compose ps                 # 先看当前状态
 docker compose down               # 停止并移除容器（不动 volume）
 ```
@@ -39,24 +39,34 @@ docker compose down               # 停止并移除容器（不动 volume）
 然后按需删除服务目录与 Nginx 配置：
 
 ```bash
-rm -rf /opt/docker-services/<service>          # 里面可能有含密钥的配置文件
-rm -f /etc/nginx/conf.d/hao-<service>.conf /etc/nginx/hao-<service>-body.conf
+rm -rf /opt/<service>                          # 里面可能有含密钥的配置文件
+rm -f /etc/nginx/conf.d/<域名>.conf /etc/nginx/snippets/<域名>.conf
 nginx -t && systemctl reload nginx             # 先测试再重载
 ```
 
 ## site 站点
 
+`CONF_NAME` = 有域名时是域名，无域名时是站点 ID（和部署时一致）。
+
 ```bash
-systemctl disable --now "hao-site-<id>.service"   # 仅 node 类型
-rm -f /etc/systemd/system/hao-site-<id>.service
+systemctl disable --now "<id>.service"            # 仅 node 类型
+rm -f /etc/systemd/system/<id>.service
 systemctl daemon-reload
-rm -f /etc/nginx/conf.d/hao-site-<id>.conf /etc/nginx/hao-site-<id>-body.conf
-rm -f /usr/local/bin/hao-site-update-<id>
+rm -f /etc/nginx/conf.d/<CONF_NAME>.conf /etc/nginx/snippets/<CONF_NAME>.conf
+rm -f /usr/local/bin/<id>-update
 nginx -t && systemctl reload nginx
 ```
 
-`/opt/hao-sites/<id>`（代码）和 `/var/www/hao-sites/<id>`（发布产物）
-**要单独问**：代码目录可能有用户没推上去的改动。
+`/opt/<id>`（代码）和 `/var/www/<域名>`（发布产物）**要单独问**：代码目录可能有
+用户没推上去的改动，而 `/var/www/<域名>` 是通用路径，里面可能混有用户自己放的东西。
+
+**证书不要顺手删。** `/etc/letsencrypt/live/<域名>/` 归 certbot 管，别的服务
+可能还在用同一张证书。真要停止续期就用 certbot 自己的命令：
+
+```bash
+certbot certificates                  # 先看有哪些
+certbot delete --cert-name <域名>     # 确认后再删
+```
 
 站点的状态记录在 `site-<id>` 下（每个站点一条），不是统一的 `site`。
 
