@@ -10,14 +10,17 @@
 # 状态目录（默认 /var/lib/hao，可用 HAO_STATE_DIR 覆盖）:
 #   NOTICE                     给人看的说明
 #   HANDOFF.md                 给下一个 agent 看的交接文档（handoff 子命令生成）
+#   DEPLOY-INTENT.md           给用户带走的部署意图（intent 子命令生成）
 #   manifest.json              汇总清单（schema_version 1）
 #   services/<svc>.json        单服务记录
 #   services/<svc>.resources   资源清单（TSV: ownership hash path）
+#   services/<svc>.intent      部署意图（TSV: key value，不含密钥）
 #
 # 记录中只有资源路径、归属类别与哈希，永远不含配置值或密钥内容。
 #
 # 用法:
 #   hao-state.sh record <service> <result> OWNERSHIP:PATH [...]
+#   hao-state.sh intent <service> key=value [...]
 #   hao-state.sh drift
 #   hao-state.sh ownership <service>
 #   hao-state.sh services
@@ -102,6 +105,111 @@ rebuild_manifest() {
     } > "$tmp"
     chmod 644 "$tmp"
     mv "$tmp" "$target"
+}
+
+# ==================== 部署意图 ====================
+# 意图 = 用户当初给的那些回答（仓库、域名、类型、分支、构建命令…）。
+#
+# 为什么单独存一份：/var/lib/hao 的其余内容描述「这台机器现在是什么样」，
+# 机器销毁就一起消失。意图描述「怎么在新机器上再造一台一样的」，是这台主机上
+# 唯一值得带走的东西 —— 所以收尾时必须让用户存到他自己的笔记或仓库里。
+#
+# 这份文件按设计**不含密钥**：明显是凭据的 key 名直接拒绝，值里内嵌的 URL
+# 凭据一律脱敏。凭据本来就不可重放（新机器上重新生成），要留旧密码得在销毁前
+# 自己从凭据文件导出。
+HAO_INTENT_SECRETISH='(password|passwd|token|secret|apikey|api_key|credential|private_key)'
+
+hao_redact_url_creds() {
+    printf '%s' "$1" | sed -E 's#(://)[^/@[:space:]]+@#\1***@#g'
+}
+
+rebuild_intent() {
+    local target="$HAO_STATE_DIR/DEPLOY-INTENT.md" tmp intent_file service key value found=0
+    tmp="$(mktemp "$HAO_STATE_DIR/.DEPLOY-INTENT.md.XXXXXX")"
+    {
+        cat <<EOF
+# HAO 部署意图
+
+> 本文件由 \`hao-state.sh intent\` 生成，请勿手工编辑。
+> 生成时间: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+**请把这份文件存到你自己的笔记或仓库里。**
+
+它记录的是部署时你给出的那些回答。\`HANDOFF.md\` 描述「这台机器现在是什么样」，
+随机器一起消失；本文件描述「怎么再造一台一样的」—— 在一台新机器上照着重放
+一遍，就能得到等价的部署。这是「机器即用即抛」能成立的前提。
+
+本文件**不含任何密钥**。凭据按设计不可重放：新机器上会重新生成。需要保留旧密码
+（数据库口令、API key 等）的，必须在销毁机器前自己从凭据文件导出 ——
+路径见 \`hao-state.sh credentials\`，只有路径，内容要你自己去取。
+
+仓库地址里如果内嵌过凭据，这里存的是脱敏形式（\`***\`），重放时需要你重新提供。
+EOF
+        for intent_file in "$HAO_STATE_DIR"/services/*.intent; do
+            [ -f "$intent_file" ] || continue
+            service="$(basename "$intent_file" .intent)"
+            found=$((found + 1))
+            printf '\n## %s\n\n' "$service"
+            while IFS=$'\t' read -r key value; do
+                [ -n "$key" ] || continue
+                printf -- '- `%s`: %s\n' "$key" "${value:-（留空）}"
+            done < "$intent_file"
+        done
+        [ "$found" -eq 0 ] && printf '\n（还没有记录任何部署意图。）\n'
+    } > "$tmp"
+    chmod 644 "$tmp"
+    mv "$tmp" "$target"
+}
+
+cmd_intent() {
+    local service="${1:-}"
+    [ -n "$service" ] || die "intent 需要 <service> 以及至少一个 key=value"
+    shift
+    [ "$#" -gt 0 ] || die "intent 需要至少一个 key=value"
+
+    [[ "$service" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+        || die "非法服务 ID（只允许小写字母、数字、连字符）: $service"
+
+    init_state
+    local intent_file="$HAO_STATE_DIR/services/$service.intent"
+    local tmp
+    tmp="$(mktemp "$HAO_STATE_DIR/services/.${service}.intent.XXXXXX")"
+
+    local entry key value clean redacted=0 count=0
+    for entry in "$@"; do
+        case "$entry" in
+            *=*) ;;
+            *) rm -f "$tmp"; die "意图条目格式错误（应为 key=value）: $entry" ;;
+        esac
+        key="${entry%%=*}"
+        value="${entry#*=}"
+        if ! [[ "$key" =~ ^[a-z][a-z0-9_]*$ ]]; then
+            rm -f "$tmp"
+            die "非法 key 名（只允许小写字母、数字、下划线）: $key"
+        fi
+        # 意图文件是 0644 且要被带离本机的，凭据绝不能进来。
+        if [[ "$key" =~ $HAO_INTENT_SECRETISH ]]; then
+            rm -f "$tmp"
+            die "拒绝把凭据写进意图文件: $key。意图文件权限 0644 且要交给用户带走，密钥请用 hao-secret.sh write。"
+        fi
+        case "$value" in
+            *$'\n'*) rm -f "$tmp"; die "$key 的值包含换行，无法写入 key=value 格式" ;;
+        esac
+        clean="$(hao_redact_url_creds "$value")"
+        [ "$clean" = "$value" ] || redacted=$((redacted + 1))
+        printf '%s\t%s\n' "$key" "$clean" >> "$tmp"
+        count=$((count + 1))
+    done
+
+    chmod 644 "$tmp"
+    mv "$tmp" "$intent_file"
+    rebuild_intent
+
+    echo "已记录部署意图: $service（$count 项）"
+    [ "$redacted" -gt 0 ] && echo "其中 $redacted 项的内嵌凭据已脱敏。"
+    echo "意图文档: $HAO_STATE_DIR/DEPLOY-INTENT.md"
+    echo "收尾时提醒用户把它存到自己的笔记或仓库里 —— 机器销毁后这份就没了。"
+    return 0
 }
 
 # ==================== record ====================
@@ -372,10 +480,11 @@ cmd_handoff() {
     id "$owner" >/dev/null 2>&1 || die "用户不存在: $owner"
 
     init_state
-    # 每次 handoff 都重建 manifest：卸载流程会直接删 services/<svc>.json
-    # （见 references/uninstall.md），只有在这里重建才能让 manifest 不留下
-    # 已经不存在的服务。下一个 agent 读到幻影服务会拒绝操作或误覆盖。
+    # 每次 handoff 都重建 manifest 与意图文档：卸载流程会直接删 services/<svc>.*
+    # （见 references/uninstall.md），只有在这里重建才能让它们不留下已经不存在的
+    # 服务。下一个 agent 读到幻影服务会拒绝操作或误覆盖。
     rebuild_manifest
+    rebuild_intent
     local handoff="$HAO_STATE_DIR/HANDOFF.md"
     local tmp
     tmp="$(mktemp "${handoff}.tmp.XXXXXX")"
@@ -396,6 +505,7 @@ EOF
         cat <<EOF
 
 完整清单: \`$HAO_STATE_DIR/manifest.json\`
+部署意图（怎么在新机器上重放）: \`$HAO_STATE_DIR/DEPLOY-INTENT.md\`
 
 ## 凭据
 
@@ -422,6 +532,9 @@ EOF
    先把将要发生的变更讲清楚并取得用户确认。
 6. **站点更新用生成的脚本**：`/usr/local/bin/hao-site-update-<id>`，
    不要手工重复 clone/build/publish 流程。
+7. **部署新东西后补记意图**：`hao-state.sh intent <service> key=value ...`，
+   然后提醒用户把 `DEPLOY-INTENT.md` 存到他自己的笔记里。那份文件是这台机器
+   销毁后唯一还能用的东西。意图文件里不许出现任何凭据。
 
 ## 这台机器上可用的更新命令
 
@@ -551,6 +664,7 @@ usage() {
 
 case "${1:-}" in
     record)      shift; cmd_record "$@" ;;
+    intent)      shift; cmd_intent "$@" ;;
     drift)       shift; cmd_drift "$@" ;;
     ownership)   shift; cmd_ownership "$@" ;;
     services)    shift; cmd_services "$@" ;;
@@ -558,5 +672,5 @@ case "${1:-}" in
     handoff)     shift; cmd_handoff "$@" ;;
     convention)  shift; cmd_convention "$@" ;;
     -h|--help|"") usage ;;
-    *) die "未知子命令: $1（可用: record drift ownership services credentials handoff convention）" ;;
+    *) die "未知子命令: $1（可用: record intent drift ownership services credentials handoff convention）" ;;
 esac

@@ -57,18 +57,32 @@ follows a procedure in `references/` and the user has confirmed.
     transcript. Reuses existing keys by default (that is the idempotency guarantee);
     refuses command-line literals because argv is world-readable via `/proc`.
   - `hao-state.sh` — writes `/var/lib/hao` state, computes drift, generates
-    `HANDOFF.md`, and writes marker-block conventions into detected AI-assistant
-    instruction files. The next agent must be able to *trust* this format.
+    `HANDOFF.md` and `DEPLOY-INTENT.md`, and writes marker-block conventions into
+    detected AI-assistant instruction files. The next agent must be able to *trust*
+    this format.
   - `hao-guard.sh` — read-only ownership checks before overwriting anything
     (`vhost-owner`, `managed-file`, `cert-issuer`, `repo-identity`, `port-free`,
     `unit-port`, `os-supported`).
 - **Runtime state on a deployed host**: `/var/lib/hao/` (`HANDOFF.md`,
-  `manifest.json` schema_version 1, `services/<svc>.json` + `.resources`).
+  `DEPLOY-INTENT.md`, `manifest.json` schema_version 1, `services/<svc>.json` +
+  `.resources` + `.intent`); credentials live separately in `/etc/hao/<svc>.env`
+  (files `0600`, directory `0700`). The split follows regenerability: `/var/lib` is
+  discardable regenerable state that backup policy often excludes, credentials are not
+  regenerable — regenerating one means changing a live password.
+  `/var/lib/hao` is an **index, not a container**: vhosts live in `/etc/nginx`, units in
+  `/etc/systemd/system`, apt sources in `/etc/apt`, because the programs consuming them
+  dictate those paths. `manifest.json` is how you find out what HAO touched.
   `record` **replaces** a service ID's entry rather than appending, so anything a module
   can deploy more than once must carry an instance suffix in its service ID
   (`site-blog`, not `site`) — otherwise the earlier instance silently drops out of
-  `drift`. `handoff` rebuilds `manifest.json`, which is what makes the uninstall flow
-  (delete `services/<svc>.*`, then `handoff`) leave a consistent manifest.
+  `drift`. `handoff` rebuilds `manifest.json` and `DEPLOY-INTENT.md`, which is what makes
+  the uninstall flow (delete `services/<svc>.*`, then `handoff`) leave both consistent.
+- **`intent` vs `record`**: `record` captures *what this host looks like now* and dies
+  with the host. `intent` captures *how to rebuild an equivalent host* (repo, domain,
+  type, branch, build command) and is the only thing worth carrying off-machine — so the
+  closing report must tell the user to save `DEPLOY-INTENT.md` themselves. The intent
+  file is `0644` and hands to the user, so it **must not contain credentials**: the
+  script rejects secret-looking key names and redacts credentials embedded in URLs.
 - **Ownership classes** (`managed` / `shared` / `observed` / `secret`) decide what a
   later agent may do to a resource. Choosing wrong has concrete costs: marking a user's
   code directory `managed` makes `drift` report false positives forever; marking

@@ -3,6 +3,53 @@
 HAO 通过插件市场分发（`.claude-plugin/marketplace.json`）。
 `plugin.json` 里的 `version` 是语义化版本，供插件生态的 semver 校验使用。
 
+## 0.3.0（未发布）—— 部署意图可带走，凭据目录收紧
+
+### 新增
+
+- **`hao-state.sh intent <service> key=value ...`** 与生成物
+  `/var/lib/hao/DEPLOY-INTENT.md`。记录部署时用户给出的那些回答（仓库、域名、
+  类型、分支、构建命令），这是机器销毁后唯一还有用的东西——`HANDOFF.md` 描述
+  「这台机器现在是什么样」，意图描述「怎么再造一台一样的」。原来的处理是在
+  `handoff.md` 里写一句「让用户自己留一份」，等于把责任推给用户。
+  收尾汇报现在必须让用户把这份文件存到他自己的笔记或仓库里。
+- 意图文件**按构造不含凭据**：明显是密钥的 key 名（`*password*`、`*token*`、
+  `*secret*`、`*apikey*`、`*credential*`…）直接拒绝，URL 里内嵌的凭据
+  （`https://user:token@host/…`）在落盘和文档两处都脱敏成 `***`。这条必须由脚本
+  强制而不能靠 agent 自觉——那份文件是 0644 且要交给用户带走的。
+- `handoff` 顺带重建 `DEPLOY-INTENT.md`，所以卸载流程（删 `services/<svc>.*`
+  再 `handoff`）会把意图一起带走，和 manifest 的生命周期一致。
+
+### 安全
+
+- **凭据目录改为 0700 创建。** 文件本来就是 0600，但目录可列出意味着同机任意
+  用户能枚举「哪些服务有凭据」。已存在的目录**绝不 chmod**——写入目标可能直接
+  落在 `/etc` 下，把 `/etc` 改成 0700 的后果远比元信息泄露严重——存量宽松目录
+  改为告警并给出确切的修法。
+- `docs/claude-code-guide.md` 原来教用户写
+  `"CLAUDE_CODE_DISABLE_1M_CONTEXT": "0"` 和 `"CLAUDE_CODE_ATTRIBUTION_HEADER": "0"`。
+  这类开关在实现里是纯真值判断（`function EO(){return a.CLAUDE_CODE_DISABLE_1M_CONTEXT}`），
+  而 `"0"` 在 JavaScript 里是 truthy——写 `"0"` 的效果是**打开**开关，和字面意思
+  相反。`references/claude-code.md` 早就写了这个坑的警告，但 guide 自己踩了进去，
+  而 guide 正是 HAO 指给用户自己读的那份。两行删掉，并补上同样的警告。
+
+### 文档
+
+- `handoff.md` 补两节：为什么状态在 `/var/lib/hao` 而凭据在 `/etc/hao`
+  （判据是可再生性与暴露等级），以及「`/var/lib/hao` 是索引不是容器」——
+  vhost 在 `/etc/nginx`、单元在 `/etc/systemd/system`、apt 源在 `/etc/apt`，
+  那些位置由消费它们的程序规定，挪不动。
+- `SECURITY.md` 增加落盘位置表与「为什么不放用户 home」的说明：`sudo` 下没有
+  唯一的 home，按用户分会把一台机器的记录拆成几份；而 `0600 root:root` 意味着
+  部署用的非 root 用户不提权读不到数据库口令,换成 home 布局这层保护按定义就没了。
+
+### 测试
+
+- 新增：意图文档生成、内嵌凭据在文档与落盘两处均已脱敏、脱敏后仍保留可辨认的
+  仓库地址、5 类凭据 key 名均被拒绝、拒绝时不破坏已有意图、非法 key/条目/service ID
+  被拒、多服务共存、`handoff` 重建意图文档、`HANDOFF.md` 指向意图文档；
+  凭据目录 0700、存量目录不被 chmod、告警含修法、已合规目录不刷告警。
+
 ## 0.2.0（未发布）—— 收窄范围到运维底座，修掉三个状态相关的缺陷
 
 ### 移除

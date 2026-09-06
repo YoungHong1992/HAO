@@ -71,10 +71,33 @@ load_existing() {
 }
 
 # ==================== 原子写入（0600） ====================
+# 凭据目录按 0700 创建：文件本身是 0600，但目录若可列出，同机任意用户就能
+# 枚举「哪些服务有凭据」。泄露的是元信息而不是密钥，但既然这棵树的边界是
+# 「什么都不该被看到」，就把它做实。
+#
+# 已存在的目录**绝不 chmod**：目标可能是 /etc/foo.env 这种直接落在 /etc 下的
+# 路径，那样会把 /etc 改成 0700，后果远比元信息泄露严重。存量目录只告警。
 write_file_0600() {
-    local target="$1" dir tmp
+    local target="$1" dir tmp mode
     dir="$(dirname "$target")"
-    mkdir -p "$dir"
+    if [ -d "$dir" ]; then
+        mode="$(stat -c '%a' "$dir" 2>/dev/null || echo '')"
+        case "$mode" in
+            700|7[0-7]00) ;;
+            '') ;;
+            *)
+                if [ -n "$mode" ] && [ "$((0${mode} & 077))" -ne 0 ]; then
+                    echo "hao-secret: 提示 —— 凭据目录 $dir 权限为 $mode，可被同机其他用户列出（文件内容仍受 0600 保护）。建议: chmod 0700 $dir" >&2
+                fi
+                ;;
+        esac
+    else
+        # SC2174「-m 只作用于最深一级目录」在这里正是想要的行为：凭据目录
+        # (/etc/hao) 要 0700，而它的父目录 (/etc) 绝不能被改。
+        # 也不用 mkdir + chmod 两步 —— 那会留下一个短暂的 0755 窗口。
+        # shellcheck disable=SC2174
+        mkdir -p -m 0700 "$dir"
+    fi
     tmp="$(mktemp "${target}.tmp.XXXXXX")"
     if ! cat > "$tmp"; then
         rm -f "$tmp"

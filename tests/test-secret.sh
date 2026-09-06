@@ -137,5 +137,25 @@ else
 fi
 [ ! -f "$WORK/never.yml" ] && note "render 被拒绝时未产出半成品" || bad "render 产出了半成品文件"
 
+# ---------- 凭据目录权限 ----------
+# 文件是 0600，但目录若可列出，同机任意用户就能枚举「哪些服务有凭据」。
+"$SECRET" write "$WORK/newdir/svc.env" TOKEN_A=@password >/dev/null
+[ "$(stat -c '%a' "$WORK/newdir")" = "700" ] \
+    && note "新建的凭据目录是 0700" || bad "新建的凭据目录不是 0700（可被枚举）"
+
+# 存量宽松目录：只告警，绝不 chmod —— 目标可能直接落在 /etc 下，
+# 那样 chmod 会把整个 /etc 改成 0700。
+mkdir -m 0755 "$WORK/legacydir"
+warn_out="$("$SECRET" write "$WORK/legacydir/svc.env" TOKEN_B=@password 2>&1 >/dev/null)"
+[ "$(stat -c '%a' "$WORK/legacydir")" = "755" ] \
+    && note "存量目录未被 chmod（不会误改 /etc）" || bad "存量目录被 chmod 了"
+printf '%s' "$warn_out" | grep -q 'chmod 0700' \
+    && note "存量宽松目录会给出告警与修法" || bad "存量宽松目录未告警"
+[ "$(stat -c '%a' "$WORK/legacydir/svc.env")" = "600" ] \
+    && note "存量目录里的凭据文件仍是 0600" || bad "凭据文件权限不对"
+# 已合规的目录不该刷告警
+quiet_out="$("$SECRET" write "$WORK/newdir/svc2.env" TOKEN_C=@password 2>&1 >/dev/null)"
+[ -z "$quiet_out" ] && note "0700 目录不产生多余告警" || bad "0700 目录仍在告警: $quiet_out"
+
 [ "$fail" -eq 0 ] || { echo "hao-secret 测试失败" >&2; exit 1; }
 echo "hao-secret 测试通过"

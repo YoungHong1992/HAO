@@ -80,16 +80,23 @@ nginx -t && systemctl reload nginx
 **只在对应服务真的已经删掉之后**再清状态：
 
 ```bash
-rm -f /var/lib/hao/services/<service>.json /var/lib/hao/services/<service>.resources
-"$SKILL/scripts/hao-state.sh" handoff        # 重建 manifest 与交接文档
+rm -f /var/lib/hao/services/<service>.json \
+      /var/lib/hao/services/<service>.resources \
+      /var/lib/hao/services/<service>.intent
+"$SKILL/scripts/hao-state.sh" handoff        # 重建 manifest、意图文档与交接文档
 ```
 
-`handoff` 会同时重建 `manifest.json`，所以删完 `services/` 下的文件必须跑一次，
-否则清单里会留下一个已经不存在的服务。站点的文件名是 `site-<id>.*`。
+`handoff` 会同时重建 `manifest.json` 和 `DEPLOY-INTENT.md`，所以删完 `services/`
+下的文件必须跑一次,否则清单里会留下一个已经不存在的服务。站点的文件名是
+`site-<id>.*`。
+
+删意图之前先问一句：**用户是不是还想留着那份重建依据。** 服务删了但意图还有用的
+情况很常见（换机器重建）。真要删就先让他把 `DEPLOY-INTENT.md` 存走。
 
 状态和现实不一致的两种后果都很烦：
 清单里留着已删的服务 → `drift` 一直报缺失；
 服务还在却删了清单 → 下一个 agent 会把它当成无主资源，可能拒绝操作或误覆盖。
 
 整台机器要销毁就不用清了，直接销毁。但**销毁前提醒用户导出他要留的东西**：
-凭据文件、数据库数据、代码里没推的改动。
+`/var/lib/hao/DEPLOY-INTENT.md`（重建依据）、凭据文件、数据库数据、
+代码里没推的改动。
