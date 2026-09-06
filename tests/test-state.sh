@@ -190,6 +190,69 @@ fi
 grep -qF "$WORK/res/site-blog.conf" "$HAO_STATE_DIR/services/site-blog.resources" \
     && bad "同一 service ID 重记未整体替换" || note "同一 service ID 重记是整体替换"
 
+# ---------- intent（部署意图） ----------
+# 意图是机器销毁后唯一还有用的东西，而且它是 0644、要交给用户带走的，
+# 所以「不含密钥」必须由脚本强制，不能靠 agent 自觉。
+"$STATE" intent site-blog \
+    type=static \
+    repo='https://alice:ghp_tok3nvalue@github.com/me/blog.git' \
+    branch=main \
+    build_cmd='npm ci && npm run build' \
+    domain= >/dev/null
+
+INTENT_DOC="$HAO_STATE_DIR/DEPLOY-INTENT.md"
+[ -f "$INTENT_DOC" ] && note "DEPLOY-INTENT.md 已生成" || bad "DEPLOY-INTENT.md 缺失"
+grep -q 'site-blog' "$INTENT_DOC" && note "意图文档含服务段" || bad "意图文档缺服务段"
+grep -q 'npm ci && npm run build' "$INTENT_DOC" \
+    && note "意图文档保留了构建命令原文" || bad "意图文档丢了构建命令"
+
+# 内嵌凭据必须脱敏，落盘和文档两处都不能有原值
+grep -q 'ghp_tok3nvalue' "$INTENT_DOC" \
+    && bad "意图文档泄漏了仓库地址里的 token" || note "意图文档已脱敏内嵌凭据"
+grep -q 'ghp_tok3nvalue' "$HAO_STATE_DIR/services/site-blog.intent" \
+    && bad "意图落盘文件泄漏了 token" || note "意图落盘文件已脱敏"
+grep -q 'https://\*\*\*@github.com/me/blog.git' "$INTENT_DOC" \
+    && note "脱敏后仍保留了可辨认的仓库地址" || bad "脱敏把仓库地址弄没了"
+
+# 凭据类 key 必须被拒绝
+for badkey in admin_password api_token session_secret my_apikey db_credential; do
+    if "$STATE" intent site-blog "$badkey=x" >/dev/null 2>&1; then
+        bad "未拒绝凭据类 key: $badkey"
+    else
+        note "拒绝凭据类 key: $badkey"
+    fi
+done
+# 被拒绝时不能破坏已有意图
+grep -q 'type' "$HAO_STATE_DIR/services/site-blog.intent" \
+    && note "拒绝后原有意图未被破坏" || bad "拒绝时破坏了原有意图文件"
+
+if "$STATE" intent site-blog Type=static >/dev/null 2>&1; then
+    bad "未拒绝大写 key"
+else
+    note "拒绝非法 key 名"
+fi
+if "$STATE" intent site-blog nokeyvalue >/dev/null 2>&1; then
+    bad "未拒绝缺少 = 的条目"
+else
+    note "拒绝格式错误的条目"
+fi
+if "$STATE" intent BadService type=x >/dev/null 2>&1; then
+    bad "未拒绝非法 service ID"
+else
+    note "intent 拒绝非法 service ID"
+fi
+
+# 多服务共存 + handoff / 卸载生命周期
+"$STATE" intent site-shop type=node domain=shop.example.com >/dev/null
+[ "$(grep -c '^## ' "$INTENT_DOC")" -eq 2 ] \
+    && note "意图文档同时列出两个服务" || bad "意图文档未同时列出两个服务"
+rm -f "$HAO_STATE_DIR/services/site-shop.intent"
+"$STATE" handoff --user "$(id -un)" --skip-agent-files >/dev/null
+[ "$(grep -c '^## ' "$INTENT_DOC")" -eq 1 ] \
+    && note "handoff 重建意图文档，已删服务不再出现" || bad "handoff 未重建意图文档"
+grep -q 'DEPLOY-INTENT' "$HANDOFF" \
+    && note "HANDOFF.md 指向意图文档" || bad "HANDOFF.md 未指向意图文档"
+
 # ---------- convention ----------
 CONV_FILE="$WORK/conv-AGENTS.md"
 printf '# 已有\n\n保留这行。\n' > "$CONV_FILE"

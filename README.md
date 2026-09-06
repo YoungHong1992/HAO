@@ -60,10 +60,19 @@ Claude Code。在笔记本上跑这套流程只会把笔记本改坏。
 
 ```
 /var/lib/hao/
-├── HANDOFF.md        给下一个 agent 看：装了什么、凭据在哪、什么不能碰
-├── manifest.json     机器可读的资源清单（含归属类别与内容哈希）
-└── services/         每个服务一份记录
+├── HANDOFF.md          给下一个 agent 看：装了什么、凭据在哪、什么不能碰
+├── DEPLOY-INTENT.md    给你带走：怎么在新机器上重放这次部署（不含密钥）
+├── manifest.json       机器可读的资源清单（含归属类别与内容哈希）
+└── services/           每个服务一份记录
 ```
+
+凭据不在这里，在 `/etc/hao/<服务>.env`（文件 `0600`，目录 `0700`）。分开放是
+因为**状态可再生、凭据不可再生**：`/var/lib` 按惯例是可丢弃的再生状态，备份策略
+经常整体排除它，而凭据丢了服务就废了。
+
+要注意 `/var/lib/hao` **是索引而不是容器**：vhost 在 `/etc/nginx`、systemd 单元在
+`/etc/systemd/system`、apt 源在 `/etc/apt`——那些位置是消费它们的程序规定的，
+挪不动。想知道 HAO 动过哪些文件，查 `manifest.json`。
 
 部署收尾时 skill 会把一个指针块写进本机 AI 助手的指令文件，
 所以**下一个 agent 不需要谁告知，开机就知道这台机器由 HAO 管理**。
@@ -86,6 +95,10 @@ SKILL="$(dirname "$(find ~/.claude/plugins/cache -name hao-state.sh | head -1)")
 "$SKILL/hao-state.sh" drift         # 有没有被手工改过
 "$SKILL/hao-state.sh" credentials   # 凭据文件路径（不含内容）
 ```
+
+**机器销毁前**：把 `/var/lib/hao/DEPLOY-INTENT.md` 存到你自己的笔记或仓库里。
+它是这台机器上唯一值得带走的东西——有了它在新机器上重放一遍就行。凭据不在其中，
+按设计不可重放；要留旧密码得自己从凭据文件导出。
 
 ## 安全底线
 

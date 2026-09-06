@@ -13,16 +13,39 @@
 /var/lib/hao/
 ├── NOTICE                      给人看的说明
 ├── HANDOFF.md                  给下一个 agent 看的交接文档（自动生成）
+├── DEPLOY-INTENT.md            给用户带走的部署意图（自动生成，不含密钥）
 ├── manifest.json               汇总清单，schema_version 1
 └── services/
     ├── <service>.json          单服务记录
-    └── <service>.resources     资源清单（TSV: ownership 哈希 路径）
+    ├── <service>.resources     资源清单（TSV: ownership 哈希 路径）
+    └── <service>.intent        部署意图（TSV: key 值，不含密钥）
 ```
 
 用 `HAO_STATE_DIR` 可以整体改位置（测试时用）。
 
 记录里只有**资源路径、归属类别、内容哈希**。配置值不进去，密钥内容更不进去。
 凭据文件只登记路径，哈希恒为 `redacted`。
+
+### 为什么状态在 `/var/lib/hao` 而凭据在 `/etc/hao`
+
+分开放不是随意的，判据是**可再生性**和**暴露等级**，两者一致的才该同处一树：
+
+| 类别 | 可再生？ | 该被读到？ | 位置 |
+|---|---|---|---|
+| 状态索引、交接文档、意图 | 是（重跑 `record` / `intent`） | 是（0644） | `/var/lib/hao` |
+| 凭据 | **否**（重新生成等于换密码） | 否（0600，目录 0700） | `/etc/hao` |
+
+`/var/lib` 按惯例是"可丢弃的再生状态"，备份和配置管理经常整体排除它；凭据丢了
+服务就废了，不能和可再生的东西共命运。而且 `/var/lib/hao` 里的 `NOTICE`、
+`HANDOFF.md`、`manifest.json` 是**故意**可读的，把 0600 的密钥塞进一棵默认可读的
+树，是把两个暴露等级混在一起。
+
+### `/var/lib/hao` 是索引，不是容器
+
+这里**不持有**被部署的资源，只持有"资源在哪、归谁、内容哈希是什么"的记录。
+vhost 在 `/etc/nginx`、单元文件在 `/etc/systemd/system`、apt 源在 `/etc/apt`——
+那些位置是消费它们的程序规定的，挪进 `/var/lib/hao` 只会让 nginx 找不到配置。
+想知道 HAO 动过哪些文件，查 `manifest.json`，不要指望目录里能翻出来。
 
 ## manifest.json
 
@@ -126,10 +149,35 @@ cat /var/lib/hao/HANDOFF.md                      # 先读这个
 
 ## 机器销毁后还剩什么
 
-`/var/lib/hao` 随机器一起消失。真正需要跨机器存活的是**部署意图**，不是状态：
-站点 ID、仓库地址、类型、域名、分支、构建命令这些回答，让用户自己留一份
-（记在他自己的笔记或仓库里）。有了这些，在一台新机器上重放一遍就能得到
-等价的部署——这就是"即用即抛"成立的前提。
+`/var/lib/hao` 随机器一起消失。真正需要跨机器存活的是**部署意图**，不是状态。
+所以凡是问过用户的那些回答，收尾时都要记进意图文件：
+
+```bash
+"$SKILL/scripts/hao-state.sh" intent site-blog \
+    type=static \
+    repo="$REPO" \
+    branch="$BRANCH" \
+    domain="$DOMAIN" \
+    build_cmd="$BUILD_CMD" \
+    output_dir="$OUTPUT" \
+    run_user="$USER" \
+    cert=letsencrypt
+```
+
+规则：
+
+- key 只允许小写字母、数字、下划线；service ID 和 `record` 用同一个
+  （站点是 `site-<id>`），这样卸载时删 `services/<svc>.*` 会把意图一起带走。
+- **凭据一律不许进去。** key 名里带 `password` / `token` / `secret` / `apikey` 之类的
+  会被直接拒绝——这份文件是 0644 且要交给用户带走的。
+- 仓库地址里内嵌的凭据会被自动脱敏成 `***`，落盘和文档里都不会有原值。
+  重放时需要用户重新提供。
+- `intent` 会重建 `DEPLOY-INTENT.md`；`handoff` 也会重建一次，所以顺序无所谓。
+
+**收尾汇报必须让用户把 `DEPLOY-INTENT.md` 存到他自己的笔记或仓库里。**
+有了它，在一台新机器上重放一遍就能得到等价的部署——这就是"即用即抛"成立的前提。
+只留在 `/var/lib/hao` 里等于没留。
 
 凭据不属于可重放的部分：新机器上会重新生成。用户如果需要保留旧密码，
-必须在销毁机器前自己导出。销毁前提醒一次。
+必须在销毁机器前自己从凭据文件导出（路径见 `credentials`，内容要他自己去取）。
+销毁前提醒一次。

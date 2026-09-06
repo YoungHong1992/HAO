@@ -61,9 +61,7 @@ cat > ~/.claude/settings.json <<'EOF'
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "替换为网关提供的模型名",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "替换为网关提供的模型名",
     "API_TIMEOUT_MS": "3000000",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-    "CLAUDE_CODE_DISABLE_1M_CONTEXT": "0",
-    "CLAUDE_CODE_ATTRIBUTION_HEADER": "0"
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
   }
 }
 EOF
@@ -72,6 +70,22 @@ chmod 600 ~/.claude/settings.json
 ```
 
 > 不要把真实 `ANTHROPIC_AUTH_TOKEN` 提交到 Git 仓库。只在本机或服务器的用户目录中保存真实 token。
+
+### ⚠️ 开关类变量：写 `"0"` 不等于关闭
+
+`CLAUDE_CODE_DISABLE_*` 这一类开关**只看有没有被设置，不看值是什么**。
+它们在实现里就是一个真值判断，而字符串 `"0"` 在 JavaScript 里是 truthy——
+所以写成 `"0"` 的效果和写 `"1"` 一样，都是**打开**这个开关。
+
+```json
+"CLAUDE_CODE_DISABLE_1M_CONTEXT": "0"    ❌ 这会关掉 1M 上下文，和字面意思相反
+```
+
+**要关闭一个开关，就把这个键整个删掉，不要设成 `"0"`。**
+
+上面的配置里只保留了 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"`——
+自建网关场景下这是想要的（关掉自更新、遥测、错误上报这些发往官方端点的流量）。
+其余开关一律不写，用默认行为。
 
 ---
 

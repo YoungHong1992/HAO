@@ -29,6 +29,11 @@ containers cannot realistically exercise systemd or Docker.
 - Generated credentials are written only to per-service files created atomically with
   `0600` permissions. The value is never printed to stdout — the script reports the file
   path and the key *names* only.
+- **The credential directory is created `0700`.** File contents are already protected by
+  `0600`, but a listable directory lets any local user enumerate which services hold
+  credentials. An existing directory is never `chmod`ed — the write target could sit
+  directly under `/etc`, and tightening that would be far worse than the metadata leak —
+  so a pre-existing permissive directory produces a warning naming the fix instead.
 - **Command-line literals are refused.** `KEY=hunter2` is rejected with an explanation,
   because argv is world-readable via `ps` and `/proc/<pid>/cmdline`. User-supplied
   secrets must come in as `KEY=@file:PATH` or `KEY=@env:VARNAME`.
@@ -46,6 +51,36 @@ containers cannot realistically exercise systemd or Docker.
   Resources classed `secret` are recorded with the hash literally `redacted` and are
   never hashed or read.
 - `credentials` lists credential file *paths* and nothing else.
+- **The deployment-intent file cannot carry a credential.** `DEPLOY-INTENT.md` is `0644`
+  and is explicitly handed to the user to store off-machine, so `intent` rejects
+  secret-looking key names (`*password*`, `*token*`, `*secret*`, `*apikey*`,
+  `*credential*`, …) and redacts credentials embedded in URLs
+  (`https://user:token@host/…` → `https://***@host/…`) in both the generated document
+  and the on-disk record.
+
+## Where things live, and why
+
+| Class | Regenerable? | Meant to be readable? | Location |
+|---|---|---|---|
+| State index, handoff doc, deployment intent | yes (re-run `record` / `intent`) | yes (`0644`) | `/var/lib/hao` |
+| Credentials | **no** — regenerating one changes a live password | no (`0600`, dir `0700`) | `/etc/hao` |
+| Config consumed by other programs | yes | varies | wherever that program requires |
+
+The split is deliberate. `/var/lib` is conventionally discardable regenerable state that
+backup and configuration-management policy often excludes wholesale; credentials must
+survive. Mixing `0600` secrets into a tree whose `NOTICE`, `HANDOFF.md` and
+`manifest.json` are *deliberately* world-readable would put two exposure classes in one
+place.
+
+`/var/lib/hao` is an **index, not a container**. It does not hold the deployed resources,
+only the record of where they are and who owns them. Nginx vhosts, systemd units and apt
+sources live where those programs require, and cannot be consolidated.
+
+Secrets are deliberately **not** kept under a user's home directory. Under `sudo` there
+is no single unambiguous home, so a per-user layout would fragment one machine's record
+across several users; `0600 root:root` under `/etc` also means the deploying
+(non-root) user cannot read a database password without escalating, which a home-directory
+layout gives up by construction.
 
 **Behavioural rules for the executing agent** (`references/safety.md`):
 

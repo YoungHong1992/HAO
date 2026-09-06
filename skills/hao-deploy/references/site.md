@@ -267,6 +267,26 @@ openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
 克隆目录记 `observed` 而不是 `managed`：里面的内容由用户的仓库决定，每次
 更新都会变，记 managed 会让 `drift` 天天误报。
 
+然后把用户给的那些回答记成部署意图——这是新机器上重放这次部署的唯一依据：
+
+```bash
+# CERT_STATE 填 cert-issuer 的实际结果：letsencrypt / selfsigned / none
+"$SKILL/scripts/hao-state.sh" intent "site-$ID" \
+    type="$TYPE" \
+    repo="$REPO" \
+    branch="$BRANCH" \
+    domain="${DOMAIN:-}" \
+    build_cmd="${BUILD_CMD:-}" \
+    output_dir="${OUTPUT:-}" \
+    entry="${ENTRY:-}" \
+    run_user="$USER" \
+    cert="$CERT_STATE"
+```
+
+`repo` 里内嵌的凭据会被自动脱敏,不用自己处理。**不要**往里塞任何密钥——
+key 名带 `password`/`token`/`secret` 之类的会被直接拒绝。
+node 类型不填 `build_cmd`/`output_dir`，static 类型不填 `entry`，留空即可。
+
 ## 7. 汇报给用户
 
 至少说清这几件事，用普通话而不是路径清单：
@@ -275,6 +295,8 @@ openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
 - 是否启用了跳转，以及 443 放行的提醒
 - 更新命令：`sudo hao-site-update-$ID`
 - 代码目录、发布目录 / 服务单元与端口
+- **让他把 `/var/lib/hao/DEPLOY-INTENT.md` 存一份到自己的笔记或仓库里**——
+  机器销毁后，那是重建这个站点的唯一依据
 
 ## 常见问题
 
