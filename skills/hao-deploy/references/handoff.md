@@ -64,8 +64,8 @@ vhost 在 `/etc/nginx`、单元文件在 `/etc/systemd/system`、apt 源在 `/et
       "result": "installed",
       "ownership": "managed",
       "resources": [
-        {"path": "/etc/nginx/conf.d/hao-site-blog.conf", "ownership": "managed", "sha256": "c467…"},
-        {"path": "/opt/hao-sites/blog", "ownership": "observed", "sha256": "directory"},
+        {"path": "/etc/nginx/conf.d/blog.example.com.conf", "ownership": "managed", "sha256": "c467…"},
+        {"path": "/opt/blog", "ownership": "observed", "sha256": "directory"},
         {"path": "/etc/hao/blog.env", "ownership": "secret", "sha256": "redacted"}
       ]
     }

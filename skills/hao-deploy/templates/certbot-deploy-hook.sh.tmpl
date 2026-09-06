@@ -1,0 +1,21 @@
+#!/bin/sh
+# Managed by HAO
+# Service: nginx
+# 目标路径: /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh （权限 0755）
+#
+# certbot 续期成功后自动执行。放在这个约定目录里，好处是：
+#   1. 任何运维人员都能在预期位置找到它，不需要知道 HAO 的存在；
+#   2. 对**所有**证书生效，不只是 HAO 签发的那些；
+#   3. 不需要在每个域名的签发命令里重复 --deploy-hook。
+#
+# 无占位符，逐字安装。
+set -eu
+
+# 配置有错时不要 reload —— 那会让所有站点一起下线。
+if nginx -t >/dev/null 2>&1; then
+    systemctl reload nginx
+else
+    echo "reload-nginx: nginx -t 失败，已跳过 reload。新证书要等配置修好后才生效。" >&2
+    nginx -t 2>&1 || true
+    exit 1
+fi

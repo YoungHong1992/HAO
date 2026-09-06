@@ -92,6 +92,23 @@ reference。**不要替用户猜域名、Git 身份、仓库地址这类东西�
 现有模板都不含密钥；一旦要写入含密钥的配置，用 `hao-secret.sh render` 渲染，
 不要自己读出密钥再拼进去。
 
+### 主机上的路径一律用通用形式
+
+写到主机上的东西必须让**不知道 HAO 存在的运维人员**也能维护：源码在
+`/opt/<站点ID>`，静态产物在 `/var/www/<域名>`，vhost 在
+`/etc/nginx/conf.d/<域名>.conf`，共享片段和内容块在 `/etc/nginx/snippets/`，
+systemd 单元叫 `<站点ID>.service`，更新脚本叫 `/usr/local/bin/<站点ID>-update`，
+证书由 certbot 签在 `/etc/letsencrypt/live/<域名>/`。**没有 `hao-` 前缀。**
+
+唯一保留 HAO 标识的地方是**文件内部的注释头**（`# Managed by HAO` /
+`# Service:` / `# HAO-SITE:`）。`hao-guard.sh` 靠它判断归属，读的是文件内容不是
+文件名，所以通用命名不花任何代价——但**那几行注释一行都不能删**，删了 HAO 就分不清
+"这是我写的"和"这是别人的"。在生成的配置里标明出处本身就是通行做法
+（certbot 写 `# managed by Certbot`）。
+
+`/var/lib/hao`（状态）和 `/etc/hao`（凭据）不在此列：`/var/lib/<工具名>`、
+`/etc/<工具名>` 正是约定本身，同 `/var/lib/docker`、`/etc/docker`。
+
 ### 不在本 skill 范围内的事
 
 HAO 只装**通用的运维底座**：Web 服务器、运行时、容器引擎、基础加固，以及从
@@ -112,9 +129,11 @@ HAO 只装**通用的运维底座**：Web 服务器、运行时、容器引擎�
   `docker manifest inspect <image>:<tag>` 确认 tag 还在，拉不到就停下来问用户，
   不要默默换一个。
 - 容器端口一律绑 `127.0.0.1`，对外只走 Nginx 反代。
+- 服务目录放 `/opt/<服务名>`，和站点源码同一套约定。
 
-反代和证书照 `references/site.md` 第 4 节做，`@@SITE_ID@@` 用服务名。
-收尾同样要 `hao-state.sh record` + `handoff`。
+反代和证书照 `references/site.md` 第 4 节做（含 certbot 签发与续期钩子），
+`@@CONF_NAME@@` 用域名、`@@SITE_ID@@` 用服务名。
+收尾同样要 `hao-state.sh record` + `intent` + `handoff`。
 
 ### 5. 验证
 

@@ -96,21 +96,52 @@ layout gives up by construction.
 ## Deployment hardening
 
 - Services bind to `127.0.0.1` and are reached through the managed Nginx reverse proxy
-  with TLS. Do not expose application ports directly to the internet.
-- Private keys are `600`, certificates `644`. `/.well-known/acme-challenge/` stays
-  reachable on port 80 so renewal does not break.
+  with TLS. Do not expose application ports directly to the internet. HAO cannot force an
+  application's bind address, so after starting a Node site it reads the actual listening
+  address back and tells the user plainly if the app bound `0.0.0.0` — in that state only
+  the cloud firewall is keeping the port private.
+- **Certificates go through certbot** (`certonly --webroot`), so they live in
+  `/etc/letsencrypt/live/<domain>/` with the permissions certbot sets, and renewal is
+  handled by the `certbot.timer` that ships with the package — HAO does not roll its own
+  renewal. The nginx reload hook goes in `/etc/letsencrypt/renewal-hooks/deploy/` and
+  refuses to reload when `nginx -t` fails. `python3-certbot-nginx` is deliberately **not**
+  installed: it rewrites nginx configuration, which would fight HAO's templates.
+- Self-signed fallback certificates go to Debian's `/etc/ssl/certs` (`644`) and
+  `/etc/ssl/private` (`600`, directory `0700`), never into `/etc/letsencrypt/`.
+- `/.well-known/acme-challenge/` stays reachable on port 80 so renewal does not break.
 - **80→443 redirect requires three conditions**, all of them: a real Let's Encrypt
   certificate (not the self-signed fallback), the user not having opted out, and the
   user having confirmed that the cloud firewall / security group allows 443/TCP.
   Enabling a redirect to an unreachable 443 takes a working site completely offline
   (the classic Cloudflare 522). Self-signed certificates never redirect.
 - Procedures must refuse rather than overwrite. `hao-guard.sh` answers "who owns this?"
-  read-only (`vhost-owner`, `managed-file`, `cert-issuer`, `repo-identity`), and
-  `foreign` / `not-git` / `remote-mismatch` require the agent to stop and report the
+  read-only (`vhost-owner`, `managed-file`, `cert-issuer`, `repo-identity`, `unit-free`),
+  and `foreign` / `not-git` / `remote-mismatch` require the agent to stop and report the
   path rather than delete or overwrite anything.
+- **`unit-free` guards a hazard created by using conventional names.** Site units are
+  called `<site-id>.service` with no prefix, and `/etc/systemd/system/<name>.service`
+  silently *overrides* a distro unit of the same name — a site called `nginx` would
+  shadow Nginx's own unit with no error at all. Writing a unit without checking first is
+  a defect, not a style choice.
 - HAO does not change the SSH port, disable password login, or alter firewall default
   policy on its own initiative — those can lock the user out of their own machine with
   no second way in.
+
+## Generic layout is a security property, not just ergonomics
+
+Everything HAO writes to a host goes to a conventional location with a conventional name:
+`/opt/<site-id>`, `/var/www/<domain>`, `/etc/nginx/conf.d/<domain>.conf`,
+`/etc/nginx/snippets/`, `/etc/systemd/system/<site-id>.service`,
+`/etc/letsencrypt/live/<domain>/`. A HAO-specific layout would mean that when something
+goes wrong, only someone who knows HAO can audit or fix it — and the users HAO targets
+are precisely those who will hand the machine to someone else.
+
+What is *not* generic, deliberately, is the provenance header inside each generated file
+(`# Managed by HAO` / `# Service:` / `# HAO-SITE:`). Ownership detection reads file
+contents rather than filenames, so generic naming costs nothing — but removing those
+headers would leave HAO unable to distinguish its own files from a stranger's, which is
+what the refuse-rather-than-overwrite guarantee rests on. Marking generated files this way
+is itself standard practice (certbot writes `# managed by Certbot`).
 
 ## Third-party applications are out of scope
 

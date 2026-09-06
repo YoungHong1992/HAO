@@ -3,6 +3,93 @@
 HAO 通过插件市场分发（`.claude-plugin/marketplace.json`）。
 `plugin.json` 里的 `version` 是语义化版本，供插件生态的 semver 校验使用。
 
+## 0.4.0（未发布）—— 主机布局改成业内通用形式，证书换 certbot
+
+部署结果原来只有 HAO 自己认识：`/var/www/hao-sites/<id>`、`/opt/hao-sites/<id>`、
+`/etc/nginx/conf.d/hao-site-<id>.conf`、`/etc/nginx/ssl/<域名>/`。一个不了解 HAO 的
+运维人员登上机器，在他习惯的位置什么都找不到。这违背 HAO 的目标：它服务的是不懂
+运维的用户，而这类用户的机器**最终往往由别人接手**——如果 HAO 留下的东西只有 HAO
+能维护，就把用户锁在了 HAO 上。
+
+### 破坏性变更：主机路径
+
+| 类别 | 旧 | 新 |
+|---|---|---|
+| 源码检出 / Node 应用 | `/opt/hao-sites/<id>` | `/opt/<id>` |
+| 静态站 docroot | `/var/www/hao-sites/<id>` | `/var/www/<域名>`（无域名时 `/var/www/<id>`） |
+| vhost | `conf.d/hao-site-<id>.conf` | `conf.d/<域名>.conf` |
+| 站点内容块 | `/etc/nginx/hao-site-<id>-body.conf` | `/etc/nginx/snippets/<域名>.conf` |
+| SSL 参数 | `/etc/nginx/hao-ssl-params.conf` | certbot 的 `options-ssl-nginx.conf` + `snippets/ssl-hardening.conf` |
+| ACME location | `/etc/nginx/hao-acme-location.conf` | `/etc/nginx/snippets/acme-challenge.conf` |
+| ACME webroot | `/var/www/acme` | `/var/www/html` |
+| 证书 | `/etc/nginx/ssl/<域名>/{fullchain,key}.pem` | `/etc/letsencrypt/live/<域名>/{fullchain,privkey}.pem` |
+| 自签名兜底 | 同上 | `/etc/ssl/certs/<域名>.pem` + `/etc/ssl/private/<域名>.key` |
+| systemd 单元 | `hao-site-<id>.service` | `<id>.service` |
+| 更新脚本 | `/usr/local/bin/hao-site-update-<id>` | `/usr/local/bin/<id>-update` |
+| Compose 服务目录 | `/opt/docker-services/<service>` | `/opt/<service>` |
+
+`/var/lib/hao`（状态）和 `/etc/hao`（凭据）**不变**——`/var/lib/<工具名>`、
+`/etc/<工具名>` 正是约定本身，同 `/var/lib/docker`、`/etc/docker`。
+
+**不提供旧布局迁移。** 旧布局部署过的机器保持原样，但其 `manifest.json` 里的路径
+与新文档不一致。
+
+**保留的唯一 HAO 标识是文件内部的注释头**（`# Managed by HAO` / `# Service:` /
+`# HAO-SITE:`）。归属判断读文件内容而不是文件名，所以通用命名不花代价——但删掉
+那几行 HAO 就分不清"这是我写的"和"这是别人的"，拒绝覆盖的保证就失效了。
+在生成的配置里标明出处本身是通行做法（certbot 写 `# managed by Certbot`）。
+
+### 证书：acme.sh → certbot
+
+- 装发行版包 `certbot`，不再 `curl | sh` 装 acme.sh。
+- **不装 `python3-certbot-nginx`**：那个插件会改 nginx 配置，和 HAO 的模板打架，
+  还会让 `drift` 天天报警。用 `certonly --webroot`——certbot 只签发，配置归模板。
+- **续期不再由 HAO 负责**：`certbot.timer` 随包安装并自动启用。
+- reload 钩子放 `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh`（新模板），
+  比 acme.sh 的 `--reloadcmd` 好在它是任何运维都能找到的文件，且对所有证书生效。
+  钩子在 `nginx -t` 失败时拒绝 reload。
+- 顺带修掉一处实际的配置退步：HAO 旧的 `nginx-ssl-params.conf` 里还留着 `3DES`
+  密码套件，且 `ssl_session_tickets on`（不利于前向保密）。certbot 自带的
+  `options-ssl-nginx.conf` 无 3DES 且 tickets 为 `off`，直接 include 它，
+  HAO 只留 HSTS 一行。
+
+### 新增 `hao-guard.sh unit-free`
+
+去掉 `hao-site-` 前缀带来一个新风险：`/etc/systemd/system/<name>.service` 会
+**静默覆盖** `/usr/lib/systemd/system/<name>.service`。站点 ID 叫 `nginx`、`cron`、
+`ssh` 就会顶掉发行版的单元，且不报任何错。写单元前必须先查。
+
+输出词汇与 `vhost-owner` 完全一致（`free` / `hao-site <id>` / `hao <service>` /
+`foreign`）。两者现在共用 `classify_hao_file`。`HAO_UNIT_DIRS` 供测试覆盖搜索路径；
+systemd 可用时还会问它一次，以覆盖 alias、generator 生成、以及被 mask 的单元。
+
+### 顺带修的两个同类缺陷
+
+- **`@@NODE_BIN@@` 不再用 `command -v node`**，强制 `/usr/bin/node`。原写法会取到
+  家目录里的 node——真实事故：`/home/<user>/.hermes/node/bin/node` 被一个以 root
+  运行的服务依赖，用户清理家目录时服务就坏。这正是 `references/node.md` 开头记录的
+  那个场景。
+- **启动后回读实际监听地址**。HAO 管不了应用绑 `0.0.0.0` 还是 `127.0.0.1`，但必须
+  查一下并如实告诉用户：绑了全网卡意味着该端口绕过 Nginx 直接可达，TLS 和访问控制
+  全被跳过，此时唯一挡着的是云安全组。
+
+### 文档
+
+- `docs/cloudflare-dns-guide.md` 清掉旧 CLI 时代的 `HAO_SITE_<ID>_REDIRECT=yes/no`
+  （那些环境变量随 CLI 一起没了）、acme.sh 与 `/etc/nginx/ssl/` 引用；
+  Origin Certificate 的存放位置改成 Debian 标准的 `/etc/ssl/{certs,private}`。
+- `SECURITY.md` 新增「通用布局是安全属性，不只是易用性」一节。
+- `HANDOFF.md` 里"可用的更新命令"改为 glob `*-update` 再按 `# Managed by HAO` 头筛
+  ——通用命名下不能光靠文件名前缀认自己的东西。
+
+### 测试
+
+- `unit-free` 8 条：未占用 / 发行版单元必拒 / 本站点自己的 / 别的 HAO 单元 /
+  带后缀 / `/etc` 覆盖 `/lib` 时报 `/etc` 那份 / 拒绝路径分隔符 /
+  在真实系统上认出 `nginx.service`。
+- `vhost-owner` 与 `managed-file` 的 fixture 改成通用文件名
+  （`blog.example.com.conf`），用来证明归属判断确实不依赖文件名。
+
 ## 0.3.0（未发布）—— 部署意图可带走，凭据目录收紧
 
 ### 新增

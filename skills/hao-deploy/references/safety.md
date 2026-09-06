@@ -9,7 +9,7 @@
 **任何会改变系统的操作之前，先讲清楚再做。** 用普通话讲，不要甩一串命令：
 
 > 我接下来会：安装 Nginx（会添加一个软件源）、修改内核网络参数、
-> 把你的博客代码克隆到 /opt/hao-sites/blog、申请一张 HTTPS 证书。
+> 把你的博客代码克隆到 /opt/blog、申请一张 HTTPS 证书。
 > 大约需要 3 分钟。要继续吗？
 
 需要显式确认的操作：
@@ -31,12 +31,17 @@
 ```bash
 "$SKILL/scripts/hao-guard.sh" managed-file <path>          # missing / managed / foreign
 "$SKILL/scripts/hao-guard.sh" vhost-owner <server_name>    # free / hao-site / hao / foreign
+"$SKILL/scripts/hao-guard.sh" unit-free <unit_name>        # 同一套输出词汇
 "$SKILL/scripts/hao-guard.sh" repo-identity <dir> <remote> # absent / ok / not-git / remote-mismatch
 ```
 
 返回 `foreign`、`not-git`、`remote-mismatch` 一律**停下来**，把路径报给用户，
 让用户决定。不要 `rm -rf`，不要"顺手清理一下"。那可能是用户自己放的东西，
 也可能是另一套线上服务。
+
+`unit-free` 单独说一句：站点的 systemd 单元用通用命名 `<id>.service`，而
+`/etc/systemd/system/<name>.service` 会**静默覆盖**发行版的同名单元。站点 ID
+撞上 `nginx` 就会把 Nginx 的单元顶掉，不报错。写单元前必须先问这一句。
 
 覆盖 `managed` 资源之前先跑 `hao-state.sh drift`。有漂移说明有人手工改过，
 先解释差异再问用户。

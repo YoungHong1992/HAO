@@ -48,9 +48,26 @@ follows a procedure in `references/` and the user has confirmed.
 - **`templates/`** — the authoritative content for every file written to a host
   (nginx configs, systemd units, generated update scripts). Tokens are
   `@@NAME@@`. Templates carrying secrets are rendered with `hao-secret.sh render`, never
-  by reading a secret and interpolating it. Shared fragments (`hao-ssl-params.conf`,
-  `hao-acme-location.conf`, per-site body files) are written once and `include`d rather
-  than duplicated into each server block.
+  by reading a secret and interpolating it. Shared fragments
+  (`snippets/ssl-hardening.conf`, `snippets/acme-challenge.conf`, per-site body files)
+  are written once and `include`d rather than duplicated into each server block.
+- **Host paths are deliberately generic, with no `hao-` prefix**: `/opt/<site-id>` for
+  source, `/var/www/<domain>` for a static docroot, `/etc/nginx/conf.d/<domain>.conf`,
+  `/etc/nginx/snippets/<domain>.conf`, `/etc/systemd/system/<site-id>.service`,
+  `/usr/local/bin/<site-id>-update`, certbot's `/etc/letsencrypt/live/<domain>/` for
+  certs. The point is that a sysadmin who has never heard of HAO can maintain the result;
+  a HAO-only layout locks the user in. **What must stay is the in-file
+  `# Managed by HAO` / `# Service:` / `# HAO-SITE:` comment header** — `hao-guard.sh`
+  reads file *contents*, not filenames, so generic naming costs nothing, but deleting
+  those headers breaks ownership detection entirely. Marking generated files with a
+  provenance comment is itself conventional (certbot writes `# managed by Certbot`).
+- **Certificates go through certbot, not acme.sh**, and HAO installs only `certbot`
+  (never `python3-certbot-nginx` — that plugin rewrites nginx config, fights the
+  templates, and makes `drift` report constantly). Use `certonly --webroot`: certbot
+  issues, templates configure. Renewal needs no HAO involvement (`certbot.timer` ships
+  with the package); the reload hook goes in `/etc/letsencrypt/renewal-hooks/deploy/`.
+  Self-signed fallback goes to Debian's `/etc/ssl/certs` + `/etc/ssl/private`, never
+  into `/etc/letsencrypt/`.
 - **`scripts/`** — only three things stay deterministic, because improvising them
   breaks a guarantee:
   - `hao-secret.sh` — generates/reuses/injects credentials so values never enter the
@@ -62,7 +79,10 @@ follows a procedure in `references/` and the user has confirmed.
     this format.
   - `hao-guard.sh` — read-only ownership checks before overwriting anything
     (`vhost-owner`, `managed-file`, `cert-issuer`, `repo-identity`, `port-free`,
-    `unit-port`, `os-supported`).
+    `unit-free`, `unit-port`, `os-supported`). `unit-free` exists because dropping the
+    `hao-site-` unit prefix means `/etc/systemd/system/<name>.service` can silently
+    override a distro unit — a site called `nginx` would shadow Nginx's own unit with no
+    error. `vhost-owner` and `unit-free` share `classify_hao_file`.
 - **Runtime state on a deployed host**: `/var/lib/hao/` (`HANDOFF.md`,
   `DEPLOY-INTENT.md`, `manifest.json` schema_version 1, `services/<svc>.json` +
   `.resources` + `.intent`); credentials live separately in `/etc/hao/<svc>.env`
