@@ -14,14 +14,14 @@ Thumbs.db
 
 # Logs
 *.log
-/var/log/vps-deploy/
 
 # 本地部署配置（可能含配置值或密钥，不入库）
 /deploy.env
 
-# 兜底：连接凭据只写 /etc/hao/*.client.txt（0600），绝不该出现在仓库里。
-# 万一有什么东西往这个目录里写了 .txt，别让它被 `git add .` 带进历史。
-/science/*.txt
+# 兜底：凭据和客户端参数只写 /etc/hao/ 下的 0600 文件，绝不该出现在仓库里。
+# 万一有什么东西往仓库里写了 .txt，别让它被 `git add .` 带进历史。
+# 仓库里本来就没有需要入库的 .txt。
+*.txt
 
 # ShellCheck
 *.shellcheck

@@ -65,7 +65,7 @@ uninstall_usage() {
 
   reality   删 Reality 入站配置 + 它的凭据，重启 xray
   proxy     删 HTTPS 代理入站配置 + 它的凭据，重启 xray（证书不删）
-  bbr       删 /etc/sysctl.d/99-bbr.conf（重启后恢复默认拥塞控制）
+  bbr       删 /etc/sysctl.d/99-hao-bbr.conf（重启后恢复默认拥塞控制）
   core      删 xray 二进制、单元、conf.d、日志。要求入站已经全部卸掉
   all       上面全部
 
@@ -145,6 +145,14 @@ cmd_uninstall() {
     # 「基座还有没有人在用」——包括用户中途在确认提示里选了 n 而没真删的情况。
     local remaining
     remaining="$(inbound_fragments | wc -l)"
+
+    # 先把「卸 core 但还有人在用」这一支拦掉，再决定要不要重启。
+    # 反过来的话（以前就是）会白重启一次 xray：连接被打断，然后才告诉用户
+    # 「先卸掉入站再来」——那次重启对谁都没有用。
+    if { [ "$what" = "core" ] || [ "$what" = "all" ]; } && [ "$remaining" -gt 0 ]; then
+        die "还有 $remaining 个入站配置在用这个基座，先卸掉它们（uninstall reality / proxy）再卸 core。"
+    fi
+
     if [ -x "$XRAY_BIN" ] && [ -f "$XRAY_UNIT" ]; then
         if [ "$remaining" -gt 0 ]; then
             log_info "还剩 $remaining 个入站配置，重启 xray 让删除生效"
@@ -156,9 +164,6 @@ cmd_uninstall() {
     fi
 
     if [ "$what" = "core" ] || [ "$what" = "all" ]; then
-        if [ "$remaining" -gt 0 ]; then
-            die "还有 $remaining 个入站配置在用这个基座，先卸掉它们（uninstall reality / proxy）再卸 core。"
-        fi
         log_step "将删除 xray 基座"
         cat >&2 <<EOF
   $XRAY_BIN

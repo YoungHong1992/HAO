@@ -57,6 +57,21 @@ fail2ban-client status sshd        # 必须列出 jail 状态
 都会让 jail 静默缺失。状态取不到就如实说「已配置但 sshd jail 未就绪」，
 别报成功。
 
+还要看一眼**封禁动作**能不能真的执行。`fail2ban-client status sshd` 只说明 jail
+加载了，而 ban 动作（iptables / nftables）是**第一次真的要封人时**才执行的：
+那时缺后端只会在 fail2ban 自己的日志里留一行，SSH 该封的没封，而前面这条命令
+一直是绿的。
+
+```bash
+fail2ban-client get sshd banaction              # 看用的是哪个后端
+journalctl -u fail2ban -n 30 --no-pager | grep -iE 'error|failed' || echo "启动日志无报错"
+```
+
+`banaction` 是 `iptables-*` 就确认 `command -v iptables`，是 `nftables-*` 就确认
+`command -v nft`。对不上（命令不存在）就装上对应的包，或者在 jail 里指定另一个
+`banaction`，然后 `systemctl restart fail2ban` 再看一次日志。这一步不做，
+"SSH 防爆破已装好"就只是句空话。
+
 ## 5. 记录状态
 
 ```bash

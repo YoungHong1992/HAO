@@ -58,6 +58,12 @@ shell 重定向按 umask 建文件（root 下通常是 0644），而这个文件
 同机任意用户都能读；node 在"已有 settings.json 不合法"的分支会 `exit 1`，
 那时后面的清理根本不会执行，token 就留在盘上了。`trap` 是为这种中途退出兜底。
 
+⚠️ **下面这一段必须在同一次 shell 调用里跑完**（从 `install -m 600` 到
+`trap - EXIT`）。`trap ... EXIT` 是进程级的：拆成两次调用的话，第一次调用结束时
+trap 就触发了，`$CC_TMP` 被删掉，第二次调用里的 node 会往一个刚被删的路径写、
+或者在 `install` 那步失败。同理，`$CC_TOKEN` 那个 `VAR=... command` 前缀赋值只对
+紧跟的那一条命令有效，中间断开就没有值了。
+
 ```bash
 CC_TMP="$TARGET_HOME/.claude/.settings.json.hao.tmp"
 install -m 600 /dev/null "$CC_TMP"

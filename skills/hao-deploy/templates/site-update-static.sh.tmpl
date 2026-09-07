@@ -18,6 +18,9 @@
 #   @@BUILD_CMD@@ @@OUTPUT_DIR@@ @@DOCROOT@@
 # 都在下面的变量赋值里，一眼能对完。注意 @@TARGET_USER@@ 不是 $USER ——
 # 那个变量在 root shell 里恒为 root（见 references/site.md 第 0 节）。
+#
+# 每个值都必须是**单行**：占位符本身也写在上面这些注释里，而替换是整个文件范围的，
+# 多行值的后几行会从注释里漏出来变成活代码。多条命令用 `&&` 串成一行。
 set -euo pipefail
 
 SITE_ID='@@SITE_ID@@'
@@ -83,7 +86,11 @@ if [ "$OUTPUT_DIR" = "." ]; then
     rm -rf "$STAGE/.git"
 fi
 chown -R "$TARGET_USER:$TARGET_GROUP" "$STAGE"
-chmod 755 "$STAGE"
+# 显式放开权限，不能只靠 cp -a 带过来的：`cp -a` 保留源文件模式，仓库里的文件
+# 可能是 0600（umask 077 下 clone 出来的就是），Nginx 读不到就是 403 ——
+# 和"产物目录填错"的 404 不是一个现象，容易查错方向。
+find "$STAGE" -type d -exec chmod 755 {} +
+find "$STAGE" -type f -exec chmod 644 {} +
 
 if [ -d "$WEB_DIR" ]; then
     mv "$WEB_DIR" "$OLD"

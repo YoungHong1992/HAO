@@ -34,7 +34,12 @@
 "$SKILL/scripts/hao-guard.sh" unit-free <unit_name>        # 同一套输出词汇
 "$SKILL/scripts/hao-guard.sh" repo-identity <dir> <remote> # absent / ok / not-git / remote-mismatch
 "$SKILL/scripts/hao-guard.sh" cert-issuer <fullchain.pem>  # missing / letsencrypt / selfsigned / other <issuer>
+"$SKILL/scripts/hao-guard.sh" port-free [--udp] <port>     # free / busy / unknown
 ```
+
+`port-free` 的 **`unknown`** 要单独说一句：它表示这台机器上既没有 `ss` 也没有
+`netstat`，**查不了**，不等于 `free`。当成空闲继续，就等于往一个可能有人在听的
+端口上写配置。先装 `iproute2` 再查。
 
 返回 `foreign`、`not-git`、`remote-mismatch`、`other <issuer>` 一律**停下来**，
 把路径报给用户，让用户决定。不要 `rm -rf`，不要"顺手清理一下"。那可能是用户自己

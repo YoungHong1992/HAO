@@ -61,7 +61,7 @@ TLS 1.3 要你自己确认：`openssl s_client -tls1_3 -connect <站点>:443 </d
 那串参数就是这个。
 
 ```bash
-sudo ./install.sh proxy --domain proxy.example.com --port 8444 --user yanghong-usr
+sudo ./install.sh proxy --domain proxy.example.com --port 8444 --user example-usr
 ```
 
 口令默认自动生成 32 位随机串。要自带口令：

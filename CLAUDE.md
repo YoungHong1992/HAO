@@ -58,15 +58,23 @@ follows a procedure in `references/` and the user has confirmed.
   written file must be `grep -n '@@[A-Z]'`-clean before `nginx -t` / `daemon-reload`,
   because a leftover `@@SITE_ID@@` lands in the `# HAO-SITE:` header and makes
   `hao-guard.sh vhost-owner` report the site as a *different* site — after which that
-  site can never update itself. Single-line artifacts (the four apt source lines, the
+  site can never update itself. **Every token's value must be a single line.** The
+  token string also appears in the template's own comment header (the structure test
+  requires it), and substitution is file-wide: a multi-line value leaves its first line
+  inside the comment and turns the rest into live configuration outside any block, so
+  `nginx -t` reports a "directive is not allowed here" that points nowhere near the
+  cause. That is why the two "block-shaped" choices are one-line includes —
+  `@@PORT80_BODY@@` picks between `snippets/redirect-to-https.conf` and the site's own
+  body snippet — and why `@@DEFAULT@@` is a bare word appended to `listen 80`.
+  Single-line artifacts (the four apt source lines, the
   `/etc/fstab` swap line) have no template; their content is given verbatim in the
   owning reference. Templates carrying secrets are rendered with
   `hao-secret.sh render`, never by reading a secret and interpolating it — note that
   render is all-or-nothing (every `@@KEY@@` in the template must exist in the
   credential file, so substitute structural tokens first) and defaults to mode 0640.
   Shared fragments (`snippets/ssl-hardening.conf`, `snippets/acme-challenge.conf`,
-  per-site body files) are written once and `include`d rather than duplicated into each
-  server block.
+  `snippets/redirect-to-https.conf`, per-site body files) are written once and
+  `include`d rather than duplicated into each server block.
 - **Host paths are deliberately generic, with no `hao-` prefix**: `/opt/<site-id>` for
   source, `/var/www/<domain>` for a static docroot, `/etc/nginx/conf.d/<domain>.conf`,
   `/etc/nginx/snippets/<domain>.conf`, `/etc/systemd/system/<site-id>.service`,
@@ -159,6 +167,19 @@ follows a procedure in `references/` and the user has confirmed.
 - **What the tests do and don't cover**: script behavior and skill structure are
   tested; the *correctness of the prose procedures* is not — you cannot shellcheck a
   paragraph. After changing a `references/` procedure, verify it on a throwaway Ubuntu VM.
+  Two suites do reach template *content*: `tests/test-nginx-config.sh` renders the nginx
+  templates into a temp prefix and runs the real `nginx -t` (it caught the multi-line
+  token bug above, and it is the only thing that can catch a directive that a given
+  nginx version doesn't know — `http2 on;` needs >= 1.25.1, and the machine's nginx may
+  be a distro package, not ours), and `tests/test-site-update.sh` renders the static
+  update script and actually runs its failure branches.
+- **Never substitute into config with `${var//pat/rep}`.** Bash's pattern substitution
+  treats `&` in the *replacement* as "the matched text", and that behaviour was added in
+  a later bash than some supported targets ship — so a credential containing `&` gets
+  silently written as `...@@KEY@@...` while the script reports success, and the same
+  script behaves differently on different hosts. Both renderers now use an explicit
+  literal-split loop (`hao_subst_literal` / `subst_literal`); `tests/test-secret.sh` has
+  the regression test.
 - **Acceptance runs on Ubuntu only.** Debian 13/12 stay in the supported matrix but
   are not a release gate — GitHub-hosted runners have no Debian images, and containers
   can't exercise systemd/Docker realistically.

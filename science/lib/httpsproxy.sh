@@ -32,6 +32,8 @@ httpsproxy_usage() {
 选项:
   --port PORT            监听端口（默认 8444）
   --user NAME            用户名（默认 proxy）。改了会自动更新账号
+  --email ADDR           Let's Encrypt 账户联系邮箱（可选）。不给就不注册联系方式；
+                         **不会**替你从域名拼一个，那种地址通常并不存在
   --password-file PATH   口令取自这个文件的第一行（自带口令走这条）
   --password-env VAR     口令取自这个环境变量
   --rotate-password      重新生成随机口令（现有客户端要改配置）
@@ -70,7 +72,14 @@ httpsproxy_check_dns() {
 }
 
 # ==================== 证书 ====================
-# 结果通过三个全局变量传出：CERT_KIND / CERT_FULLCHAIN / CERT_KEY
+# 结果通过四个全局变量传出：
+#   CERT_KIND       给人看的一句话（会进客户端信息文件和收尾汇报）
+#   CERT_STATE      给机器看的标签：letsencrypt / selfsigned / other
+#                   —— intent 里记的是这个。以前那里用
+#                   `[ "$CERT_KIND" = "Let's Encrypt" ] && … || echo selfsigned`
+#                   去推，于是「用了别人签的现有证书」这一支被记成 selfsigned，
+#                   换机器重放时会照着错的标签走。
+#   CERT_FULLCHAIN / CERT_KEY   证书路径
 httpsproxy_ensure_cert() {
     local domain="$1" want_selfsigned="$2"
     local le_dir="/etc/letsencrypt/live/$domain"
@@ -86,6 +95,7 @@ httpsproxy_ensure_cert() {
         letsencrypt)
             log_success "已有 Let's Encrypt 证书，跳过签发（幂等）"
             CERT_KIND="Let's Encrypt"
+            CERT_STATE="letsencrypt"
             CERT_FULLCHAIN="$le_dir/fullchain.pem"
             CERT_KEY="$le_dir/privkey.pem"
             httpsproxy_install_renewal_hook
@@ -103,6 +113,7 @@ httpsproxy_ensure_cert() {
             log_warning "$le_dir/fullchain.pem 的颁发者是「$issuer」，不是本流程签的。"
             log_warning "直接用它，不覆盖、不重签。要换成 Let's Encrypt 请自己先处理掉那张证书。"
             CERT_KIND="现有证书（$issuer）"
+            CERT_STATE="other"
             CERT_FULLCHAIN="$le_dir/fullchain.pem"
             CERT_KEY="$le_dir/privkey.pem"
             [ -f "$CERT_KEY" ] || die "$CERT_KEY 不存在，无法使用这张证书。停下来人工看一眼。"
@@ -112,6 +123,7 @@ httpsproxy_ensure_cert() {
 
     if httpsproxy_issue_letsencrypt "$domain"; then
         CERT_KIND="Let's Encrypt"
+        CERT_STATE="letsencrypt"
         CERT_FULLCHAIN="$le_dir/fullchain.pem"
         CERT_KEY="$le_dir/privkey.pem"
         httpsproxy_install_renewal_hook
@@ -126,7 +138,8 @@ httpsproxy_ensure_cert() {
 }
 
 httpsproxy_issue_letsencrypt() {
-    local domain="$1" email main_domain webroot="/var/www/html" probe probe_file
+    local domain="$1" webroot="/var/www/html" probe probe_file
+    local -a acct=()
 
     if ! command -v certbot >/dev/null 2>&1; then
         log_step "安装 certbot"
@@ -137,14 +150,24 @@ httpsproxy_issue_letsencrypt() {
             || { log_error "certbot 安装失败"; return 1; }
     fi
 
-    # 账户邮箱不能用 example.com / localhost 这类占位域名，LE 会拒绝注册
-    main_domain="$(echo "$domain" | awk -F. '{print $(NF-1)"."$NF}')"
-    email="admin@$main_domain"
+    # 账户邮箱只在用户用 --email 给了的时候才带上。
+    # 以前这里从域名拼一个 admin@<主域名>，有两个具体的坏处：
+    #   1. `awk -F. '{print $(NF-1)"."$NF}'` 遇到多级后缀会算错 —— 形如
+    #      a.example.co.uk 的域名会得到 co.uk，那是注册局的域名，
+    #      等于把别人的地址填成账户联系人；
+    #   2. 就算算对了，那个信箱多半根本不存在，吊销通知发进黑洞。
+    # 没有邮箱是可以的（续期不需要它），明确地不注册比编一个好。
+    if [ -n "${PROXY_EMAIL:-}" ]; then
+        acct=(-m "$PROXY_EMAIL")
+    else
+        acct=(--register-unsafely-without-email)
+        log_info "没给 --email，按「不注册联系邮箱」签发：续期照常，但出问题时 Let's Encrypt 联系不到你。"
+    fi
 
     if [ "$(guard port-free 80)" = "free" ]; then
         log_step "签发证书（certbot --standalone，临时占用 80 端口）"
         certbot certonly --standalone -d "$domain" \
-            --non-interactive --agree-tos -m "$email" || return 1
+            --non-interactive --agree-tos "${acct[@]}" || return 1
         return 0
     fi
 
@@ -179,7 +202,7 @@ httpsproxy_issue_letsencrypt() {
 
     log_step "签发证书（certbot --webroot）"
     certbot certonly --webroot -w "$webroot" -d "$domain" \
-        --non-interactive --agree-tos -m "$email" || return 1
+        --non-interactive --agree-tos "${acct[@]}" || return 1
 }
 
 # 自签名证书放 Debian 标准位置，**不塞进 /etc/letsencrypt/** ——
@@ -204,6 +227,7 @@ httpsproxy_selfsigned_cert() {
         chmod 644 "$CERT_FULLCHAIN"
     fi
     CERT_KIND="自签名（客户端需勾「跳过证书校验」）"
+    CERT_STATE="selfsigned"
 }
 
 httpsproxy_install_renewal_hook() {
@@ -334,9 +358,9 @@ httpsproxy_verify_end_to_end() {
 
     # 自签名证书下加 --proxy-insecure：这一步要验的是「代理和认证通不通」，
     # 不是「证书可不可信」——后者已经在证书那一节如实说过了。
-    case "$CERT_KIND" in
-        自签名*) extra+=(--proxy-insecure) ;;
-    esac
+    # 判 CERT_STATE 而不是去匹配 CERT_KIND 的中文前缀：后者是给人看的文案，
+    # 改一个字这里就静默失效。
+    [ "$CERT_STATE" = "selfsigned" ] && extra+=(--proxy-insecure)
 
     tmpdir="$(make_tmpdir)"
     # shellcheck disable=SC2064
@@ -387,7 +411,9 @@ cmd_proxy() {
     PROXY_DOMAIN=""
     PROXY_PORT="$HTTPSPROXY_PORT_DEFAULT"
     PROXY_USER="$HTTPSPROXY_USER_DEFAULT"
+    PROXY_EMAIL=""
     CERT_KIND=""
+    CERT_STATE=""
     CERT_FULLCHAIN=""
     CERT_KEY=""
 
@@ -396,6 +422,7 @@ cmd_proxy() {
             --domain) [ -n "${2:-}" ] || die "--domain 需要一个域名"; PROXY_DOMAIN="$2"; shift 2 ;;
             --port)   [ -n "${2:-}" ] || die "--port 需要一个端口号"; PROXY_PORT="$2";   shift 2 ;;
             --user)   [ -n "${2:-}" ] || die "--user 需要一个用户名"; PROXY_USER="$2";   shift 2 ;;
+            --email)  [ -n "${2:-}" ] || die "--email 需要一个邮箱地址"; PROXY_EMAIL="$2"; shift 2 ;;
             --password-file)
                 [ -n "${2:-}" ] || die "--password-file 需要一个路径"
                 PASSWORD_SOURCE="file"; PASSWORD_ARG="$2"; shift 2 ;;
@@ -470,7 +497,7 @@ EOF
         domain="$PROXY_DOMAIN" \
         port="$PROXY_PORT" \
         proxy_user="$PROXY_USER" \
-        cert="$([ "$CERT_KIND" = "Let's Encrypt" ] && echo letsencrypt || echo selfsigned)"
+        cert="$CERT_STATE"
     state handoff
 
     notice_firewall "$PROXY_PORT"

@@ -36,8 +36,26 @@ SWAP=/swapfile
 #   - 是活动 swap  -> 第 1 步就该跳过了，不会走到这里
 #   - 是非活动的 swap 文件（上次装过、fstab 那行丢了）-> 直接复用，别重建
 #   - 是别的东西（用户的文件）-> 换名字，绝不覆盖
+is_swap_file() {
+    # 优先用 util-linux 的工具：它们读的是 swap 头部的魔数，判断确定。
+    # `file` 排最后 —— 最小化镜像常常没装 file，而它缺席时
+    # `file X | grep -qi swap` 只是安静地为假，于是一个**已经是 swap 文件**的
+    # /swapfile 会被判成「用户的别的文件」，然后白建一个 /swapfile.hao，
+    # 而 fstab 里那行还指着旧路径。
+    if command -v swaplabel >/dev/null 2>&1; then
+        swaplabel "$1" >/dev/null 2>&1 && return 0
+    fi
+    if command -v blkid >/dev/null 2>&1; then
+        [ "$(blkid -o value -s TYPE "$1" 2>/dev/null)" = swap ] && return 0
+    fi
+    if command -v file >/dev/null 2>&1; then
+        file -b "$1" 2>/dev/null | grep -qi 'swap file' && return 0
+    fi
+    return 1
+}
+
 if [ -e "$SWAP" ]; then
-    if file "$SWAP" | grep -qi swap; then
+    if is_swap_file "$SWAP"; then
         REUSE=1                       # 已是 swap 文件，跳过 fallocate/mkswap
     elif [ -e /swapfile.hao ]; then
         echo "/swapfile 和 /swapfile.hao 都被占了，停下来问用户要用哪个路径"; exit 1

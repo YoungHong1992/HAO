@@ -137,6 +137,25 @@ else
 fi
 [ ! -f "$WORK/never.yml" ] && note "render 被拒绝时未产出半成品" || bad "render 产出了半成品文件"
 
+# 值里的 & 和 \ 必须逐字节落盘。
+# 回归测试：曾经用 ${content//pat/rep} 做替换，而 bash 的 pattern substitution 对
+# 替换串里的 `&` 有特殊语义（代表刚匹配到的文本），且该语义是后来才加进 bash 的。
+# 于是含 & 的用户自带密钥会被静默写成 `...@@KEY@@...`，脚本还报告"已渲染"，
+# 而且换一个 bash 版本结果就不一样。
+tricky='p@ss&word\with\back&&x'
+printf '%s\n' "$tricky" > "$WORK/tricky.txt"
+"$SECRET" write "$WORK/tricky.env" TRICKY=@file:"$WORK/tricky.txt" >/dev/null 2>&1
+printf 'a=@@TRICKY@@\nb=@@TRICKY@@ tail\n' > "$WORK/tricky.tmpl"
+"$SECRET" render "$WORK/tricky.tmpl" "$WORK/tricky.out" --from "$WORK/tricky.env" >/dev/null
+if [ "$(sed -n 1p "$WORK/tricky.out")" = "a=$tricky" ] \
+    && [ "$(sed -n 2p "$WORK/tricky.out")" = "b=$tricky tail" ]; then
+    note "render 逐字节注入含 & 和 \\ 的值（多次出现也对）"
+else
+    bad "render 弄坏了含 & 的值: $(cat "$WORK/tricky.out")"
+fi
+grep -q '@@' "$WORK/tricky.out" && bad "render 后仍残留 @@ 占位符" \
+    || note "render 后没有残留占位符"
+
 # ---------- 凭据目录权限 ----------
 # 文件是 0600，但目录若可列出，同机任意用户就能枚举「哪些服务有凭据」。
 "$SECRET" write "$WORK/newdir/svc.env" TOKEN_A=@password >/dev/null

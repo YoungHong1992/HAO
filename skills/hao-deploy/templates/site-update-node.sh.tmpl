@@ -4,16 +4,22 @@
 # HAO-SITE: @@SITE_ID@@
 # 目标路径: /usr/local/bin/@@SITE_ID@@-update （权限 0755）
 #
-# node 站点更新脚本：拉取最新代码 -> 重启服务 -> 等端口就绪 -> 重载 Nginx。
+# node 站点更新脚本：拉取最新代码 -> 装依赖/构建 -> 重启服务 -> 等端口就绪 -> 重载 Nginx。
 # 脚本内嵌所有解析后的字面量，不依赖 HAO skill 或本仓库，可独立运行。
 #
-# 生成时的注意事项：值里若含单引号，必须写成 '\'' 转义形式。
+# 生成时的注意事项：
+#   - @@BUILD_CMD@@ 若为空，装依赖/构建步骤自动跳过（纯零依赖脚本才可以为空）。
+#     绝大多数 Node 应用都有依赖，留空会让服务在依赖变更后起不来。
+#   - 值里若含单引号，必须写成 '\'' 转义形式。
 #
-# 占位符（**五个全都要替换**；写入后必须 `grep -n '@@[A-Z]' <目标文件>` 确认为空）:
-#   @@SITE_ID@@ @@BRANCH@@ @@TARGET_USER@@ @@TARGET_HOME@@ @@PORT@@
+# 占位符（**六个全都要替换**；写入后必须 `grep -n '@@[A-Z]' <目标文件>` 确认为空）:
+#   @@SITE_ID@@ @@BRANCH@@ @@TARGET_USER@@ @@TARGET_HOME@@ @@BUILD_CMD@@ @@PORT@@
 # 都在下面的变量赋值里。@@PORT@@ 要和既有单元一致（用 hao-guard.sh unit-port
 # 读回来，别换端口）；@@TARGET_USER@@ 不是 $USER —— 那个变量在 root shell 里
 # 恒为 root（见 references/site.md 第 0 节）。
+#
+# 每个值都必须是**单行**：占位符本身也写在上面这些注释里，而替换是整个文件范围的，
+# 多行值的后几行会从注释里漏出来变成活代码。多条命令用 `&&` 串成一行。
 set -euo pipefail
 
 SITE_ID='@@SITE_ID@@'
@@ -21,6 +27,7 @@ CLONE_DIR='/opt/@@SITE_ID@@'
 BRANCH='@@BRANCH@@'
 TARGET_USER='@@TARGET_USER@@'
 TARGET_HOME='@@TARGET_HOME@@'
+BUILD_CMD='@@BUILD_CMD@@'
 UNIT_NAME='@@SITE_ID@@.service'
 PORT='@@PORT@@'
 
@@ -45,6 +52,19 @@ log "拉取最新代码（分支 $BRANCH）..."
 run_as_target git -C "$CLONE_DIR" fetch --prune origin
 run_as_target git -C "$CLONE_DIR" checkout -f -B "$BRANCH" "origin/$BRANCH"
 run_as_target git -C "$CLONE_DIR" reset --hard "origin/$BRANCH"
+
+# 装依赖/构建。**必须在重启之前**：依赖是跟着代码一起变的，只 restart 不装依赖，
+# 服务会因为缺模块直接起不来（现象是 502，原因在 journal 里）。
+# 失败就不重启：旧进程还在跑旧代码，站点仍然是活的。
+if [ -n "$BUILD_CMD" ]; then
+    log "装依赖/构建: $BUILD_CMD"
+    if ! run_as_target env CI=true bash -c "cd $CLONE_DIR && $BUILD_CMD"; then
+        echo "[ERROR] 构建失败，**没有重启服务** —— 旧进程还在跑，站点仍然可用。" >&2
+        echo "        注意：磁盘上的代码已经是新版本了。构建修好之前不要手工" >&2
+        echo "        systemctl restart $UNIT_NAME，那会用缺依赖的新代码顶掉在跑的旧进程。" >&2
+        exit 1
+    fi
+fi
 
 log "重启服务 $UNIT_NAME ..."
 systemctl restart "$UNIT_NAME"

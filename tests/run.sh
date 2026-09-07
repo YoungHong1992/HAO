@@ -27,6 +27,9 @@ printf '== skill structure ==\n'
 printf '== site 更新脚本（渲染后真的跑一遍）==\n'
 "$ROOT_DIR/tests/test-site-update.sh"
 
+printf '== nginx 配置（渲染后交给真的 nginx -t）==\n'
+"$ROOT_DIR/tests/test-nginx-config.sh"
+
 printf '== hao-guard ==\n'
 "$ROOT_DIR/tests/test-guard.sh"
 

@@ -7,21 +7,39 @@
 # 跨太平洋的链路丢包时 BBR 对吞吐提升明显，所以值得单独提供。
 
 BBR_SERVICE="bbr"
-BBR_SYSCTL_FILE="/etc/sysctl.d/99-bbr.conf"
+BBR_SYSCTL_FILE="/etc/sysctl.d/99-hao-bbr.conf"
 # nginx 模块写的那个文件里也含 BBR 两行。两个文件都设成 bbr 不冲突，
 # 但没必要多写一个，检测到就跳过。
-NGINX_SYSCTL_FILE="/etc/sysctl.d/99-vps-optimize.conf"
+NGINX_SYSCTL_FILE="/etc/sysctl.d/99-hao-nginx.conf"
 
 bbr_usage() {
     cat >&2 <<'EOF'
 用法: sudo ./install.sh bbr
 
-写 /etc/sysctl.d/99-bbr.conf 打开 BBR + fq，然后回读确认是否真的生效。
+写 /etc/sysctl.d/99-hao-bbr.conf 打开 BBR + fq，然后回读确认是否真的生效。
 需要内核 >= 4.9。已经由别的模块打开过就跳过。
 EOF
 }
 
 bbr_current() { sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo unknown; }
+
+# BBR 是不是被某个配置文件固化了？输出那个文件名，没找到就返回 1。
+#
+# 为什么必须查这个：`sysctl -w` 或某些云镜像的启动脚本能让当前值就是 bbr，
+# 但重启后回到默认。只看当前值就说「已经开着，不动它」，是在报告一个下次重启
+# 就消失的状态 —— 那属于「没生效却报成功」的一种。
+bbr_persisted_in() {
+    local f
+    for f in /etc/sysctl.conf /etc/sysctl.d/*.conf /run/sysctl.d/*.conf \
+             /usr/lib/sysctl.d/*.conf /lib/sysctl.d/*.conf; do
+        [ -f "$f" ] || continue
+        grep -qE '^[[:space:]]*net\.ipv4\.tcp_congestion_control[[:space:]]*=[[:space:]]*bbr[[:space:]]*$' "$f" \
+            || continue
+        printf '%s' "$f"
+        return 0
+    done
+    return 1
+}
 
 cmd_bbr() {
     case "${1:-}" in
@@ -38,12 +56,18 @@ cmd_bbr() {
     log_info "当前拥塞控制算法: $current"
 
     if [ "$current" = "bbr" ] && [ ! -f "$BBR_SYSCTL_FILE" ]; then
-        if [ -f "$NGINX_SYSCTL_FILE" ]; then
-            log_success "BBR 已经由 $NGINX_SYSCTL_FILE 打开（HAO 的 nginx 模块写的），不重复写文件"
-        else
-            log_success "BBR 已经开着，且不是本工具写的配置，不动它"
+        local persisted
+        if persisted="$(bbr_persisted_in)"; then
+            if [ "$persisted" = "$NGINX_SYSCTL_FILE" ]; then
+                log_success "BBR 已经由 $persisted 打开（HAO 的 nginx 模块写的），不重复写文件"
+            else
+                log_success "BBR 已经由 $persisted 打开，不是本工具写的，不动它"
+            fi
+            return 0
         fi
-        return 0
+        # 当前值是 bbr，但没有任何配置文件写着它 —— 只是运行时值。
+        log_warning "BBR 现在是开着的，但没有任何 sysctl 配置文件写着它：这只是运行时值，重启后会回到默认。"
+        log_warning "继续写 $BBR_SYSCTL_FILE 把它固化下来。"
     fi
 
     case "$(guard managed-file "$BBR_SYSCTL_FILE")" in
