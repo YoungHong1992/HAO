@@ -19,5 +19,9 @@ Thumbs.db
 # 本地部署配置（可能含配置值或密钥，不入库）
 /deploy.env
 
+# 旧版本会把含 UUID 的客户端信息写在这个目录里（现在写 /etc/hao/*.client.txt）。
+# 兜底，别让活的连接凭据被 `git add .` 带进历史。
+/science/*.txt
+
 # ShellCheck
 *.shellcheck

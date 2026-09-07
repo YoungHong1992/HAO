@@ -1,0 +1,49 @@
+// Managed by HAO
+// Service: xray-core
+// 目标路径: /usr/local/etc/xray/conf.d/00-base.json
+//
+// 逐字安装，无占位符。这里只放所有入站共用的东西：日志、路由、出站。
+// 入站各自在 10-*.json / 20-*.json 里，互不影响。
+//
+// Xray 的 JSON 解析器会剥掉 // 注释（infra/conf/serial/loader.go），所以这个
+// 注释头是合法的，而且 hao-guard.sh 靠它判断归属（读文件内容，不看文件名）。
+{
+  // access log 关掉是刻意的：一台个人代理的访问日志就是「这个人访问过哪些站」
+  // 的清单，留在盘上是纯粹的隐私负担；而且没人给它配轮转，早晚涨满磁盘。
+  // 排查故障看 error log 和 journalctl -u xray 就够了。
+  "log": {
+    "loglevel": "warning",
+    "access": "none",
+    "error": "/var/log/xray/error.log"
+  },
+
+  // 带认证的公网代理必须挡掉私有地址。否则拿到口令的人可以拿这台机器当跳板，
+  // 去打只监听 127.0.0.1 的本机服务（数据库、管理面板、其他 agent 的端口）——
+  // 那些服务往往因为「只有本机能连」而根本没设密码。
+  // 这条规则也是 geoip.dat 唯一的用处，没有它就不必下载那个文件。
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      {
+        "outboundTag": "block",
+        "ip": ["geoip:private"]
+      }
+    ]
+  },
+
+  // 出站全部写在这一个文件里：跨文件的 outbound 会被**前置**到数组开头，
+  // 而第一个 outbound 是默认出口。分散写会让「默认出口是哪个」随文件名变化。
+  // 同一文件内数组顺序保持不变，所以 direct 在前 = 默认直连。
+  "outbounds": [
+    {
+      "tag": "direct",
+      "protocol": "freedom",
+      "settings": {}
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole",
+      "settings": {}
+    }
+  ]
+}

@@ -39,6 +39,9 @@ printf '== generic skill (runtime-neutral) ==\n'
 printf '== hidden modules ==\n'
 "$ROOT_DIR/tests/test-hidden-modules.sh"
 
+printf '== science module (offline render + refusals) ==\n'
+"$ROOT_DIR/tests/test-science.sh"
+
 if command -v claude >/dev/null 2>&1; then
   printf '== plugin manifest validation ==\n'
   claude plugin validate "$ROOT_DIR" --strict
