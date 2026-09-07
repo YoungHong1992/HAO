@@ -2,7 +2,10 @@
 name: hao-deploy
 description: 在一台 Debian/Ubuntu 服务器上部署网站和开发运维工具，面向不懂运维的用户。当用户想把自己的 Git 仓库变成能访问的网站、想在 VPS 上装 Nginx/Docker/Node 等工具、想更新或排查已部署的站点、或者接手一台别人（或以前的自己）部署过的服务器时使用。部署完成后会在主机上留下交接记录，任何后续 agent 都能照规则接手。
 when_to_use: 用户说"帮我把这个仓库部署上线""在服务器上装个 nginx""我的站点打不开了""这台机器上装了什么""接手一下这台服务器"时触发。也适用于用户刚买了一台 VPS、想搭一个能干活或学习的环境。
-allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/hao-guard.sh *) Bash(${CLAUDE_SKILL_DIR}/scripts/hao-state.sh *) Bash(${CLAUDE_SKILL_DIR}/scripts/hao-secret.sh *)
+allowed-tools:
+  - Bash(${CLAUDE_SKILL_DIR}/scripts/hao-guard.sh:*)
+  - Bash(${CLAUDE_SKILL_DIR}/scripts/hao-secret.sh:*)
+  - Bash(${CLAUDE_SKILL_DIR}/scripts/hao-state.sh:*)
 ---
 
 # HAO 部署
@@ -16,20 +19,31 @@ allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/hao-guard.sh *) Bash(${CLAUDE_SK
 SKILL="${CLAUDE_SKILL_DIR}"
 ```
 
+（这一行里的 `${CLAUDE_SKILL_DIR}` 在加载时就被替换成真实绝对路径，所以你看到的是
+一个具体目录。权限白名单按脚本的绝对路径匹配，用 `$SKILL/...` 调用是对的；
+第一次调用某个脚本时可能弹一次授权，那不是出错。）
+
 ## 前提：你必须在目标服务器上
 
-`hao-deploy` 的所有操作都是本机操作。确认一下你在哪：
+`hao-deploy` 的所有操作都是本机操作。先确认三件事：
 
 ```bash
-hostname; "$SKILL/scripts/hao-guard.sh" os-supported; id -u
+"$SKILL/scripts/hao-guard.sh" os-supported     # 输出 "<id> <version> supported|unsupported"
+id -u                                          # 期望 0
+curl -s --max-time 5 https://api.ipify.org     # 这台机器的公网 IP
 ```
 
-如果这是用户自己的笔记本、而要部署的是一台远程 VPS，**先停下来**告诉用户：
-需要先 `ssh` 到那台服务器、在服务器上启动 Claude Code，再让我干活。
-在笔记本上跑这套流程只会把笔记本改坏。
+三条停止条件：
 
-`os-supported` 返回 `unsupported` 也停下来：支持 Debian 13/12 与
-Ubuntu 26.04/24.04/22.04 LTS，别的系统不要硬上。
+- **不是 root 且 `sudo -n true` 也不通** → 停下。装包、写 `/etc`、改 systemd 都要 root。
+- `os-supported` 以 `unsupported` 结尾 → 停下。支持 Debian 13/12 与
+  Ubuntu 26.04/24.04/22.04 LTS，别的系统不要硬上。
+  （判断要匹配结尾：`case "$(...)" in *" supported") ;; *) 停 ;; esac`，
+  它的输出是三段而不是一个单词。）
+- **公网 IP 不是用户以为的那台机器** → 停下。把上面那个 IP 念给用户确认一次，
+  `hostname` 是问不出这件事的：笔记本和 VPS 的 hostname 长得一样。
+  如果这是用户自己的笔记本、而要部署的是一台远程 VPS，告诉他：需要先 `ssh` 到那台
+  服务器、在服务器上启动 Claude Code，再让我干活。在笔记本上跑这套流程只会把笔记本改坏。
 
 ## 工作流程
 
@@ -54,9 +68,13 @@ reference。**不要替用户猜域名、Git 身份、仓库地址这类东西�
 
 ```bash
 "$SKILL/scripts/hao-state.sh" services     # 这台机器已经装了什么
-"$SKILL/scripts/hao-state.sh" drift        # 有没有被手工改过
+"$SKILL/scripts/hao-state.sh" drift        # 有没有被手工改过（只查 managed 资源）
 "$SKILL/scripts/hao-guard.sh" ...          # 目标资源归属，见各 reference
 ```
+
+`drift` 有漂移时**退出码非 0**，所以别写成 `drift && 下一步`。它也只比对 `managed`
+资源：`shared` / `observed` / `secret` 不参与，"drift 干净"的意思是"HAO 自己写的
+文件没被动过"，不等于"这台机器没被动过"。
 
 如果 `services` 显示这台机器已经被 HAO 管理过，先读
 `/var/lib/hao/HANDOFF.md`，再看 `references/handoff.md` 的接手流程。
@@ -94,27 +112,40 @@ reference。**不要替用户猜域名、Git 身份、仓库地址这类东西�
 - `references/safety.md` —— 完整安全契约
 - `references/uninstall.md` —— 卸载流程。**只在用户明确要求时才读它**
 
-配置文件内容全部在 `templates/`，把 `@@TOKEN@@` 换成实际值再写入。
-**模板是内容的权威来源**，里面每一行都有原因，不要自己重写一份"差不多的"。
+配置文件内容在 `templates/`，把 `@@TOKEN@@` 换成实际值再写入。**模板是内容的
+权威来源**，里面每一行都有原因，不要自己重写一份"差不多的"。每个模板的头部注释
+列了它自己的全部占位符；**写完必须 `grep -n '@@[A-Z]' <文件>` 确认没有残留**——
+漏一个不只是配置不对，`@@SITE_ID@@` 残留会毒化归属判断（见 `references/site.md` 第 4 节）。
+少数只有一行的东西（apt 源那几行、`/etc/fstab` 里的 swap 行）没有单独的模板，
+内容在对应 reference 里逐字给出。
+
 现有模板都不含密钥；一旦要写入含密钥的配置，用 `hao-secret.sh render` 渲染，
-不要自己读出密钥再拼进去。
+不要自己读出密钥再拼进去。render 是**全有或全无**（模板里每个 `@@KEY@@` 都必须在
+凭据文件里，所以结构性占位符要先自己替换掉），默认权限 **0640**，
+输出含密钥时要显式 `--mode 0600`。
 
 ### 主机上的路径一律用通用形式
 
 写到主机上的东西必须让**不知道 HAO 存在的运维人员**也能维护：源码在
 `/opt/<站点ID>`，静态产物在 `/var/www/<域名>`，vhost 在
-`/etc/nginx/conf.d/<域名>.conf`，共享片段和内容块在 `/etc/nginx/snippets/`，
-systemd 单元叫 `<站点ID>.service`，更新脚本叫 `/usr/local/bin/<站点ID>-update`，
-证书由 certbot 签在 `/etc/letsencrypt/live/<域名>/`。**没有 `hao-` 前缀。**
+`/etc/nginx/conf.d/<域名>.conf`，systemd 单元叫 `<站点ID>.service`，
+更新脚本叫 `/usr/local/bin/<站点ID>-update`，证书由 certbot 签在
+`/etc/letsencrypt/live/<域名>/`。**这些主产物都不带 `hao-` 前缀。**
+完整路径表和理由见 `references/site.md` 开头。
 
 唯一保留 HAO 标识的地方是**文件内部的注释头**（`# Managed by HAO` /
 `# Service:` / `# HAO-SITE:`）。`hao-guard.sh` 靠它判断归属，读的是文件内容不是
-文件名，所以通用命名不花任何代价——但**那几行注释一行都不能删**，删了 HAO 就分不清
-"这是我写的"和"这是别人的"。在生成的配置里标明出处本身就是通行做法
-（certbot 写 `# managed by Certbot`）。
+文件名，所以通用命名不花任何代价——但**那几行注释一行都不能删**。
 
-`/var/lib/hao`（状态）和 `/etc/hao`（凭据）不在此列：`/var/lib/<工具名>`、
-`/etc/<工具名>` 正是约定本身，同 `/var/lib/docker`、`/etc/docker`。
+两类例外，都不是"忘了改"：
+
+- `/var/lib/hao`（状态）和 `/etc/hao`（凭据）—— `/var/lib/<工具名>`、
+  `/etc/<工具名>` 正是约定本身，同 `/var/lib/docker`、`/etc/docker`。
+- **`*.d/` 目录里的 drop-in 片段带来源前缀**：`/etc/fail2ban/jail.d/hao-sshd.local`、
+  `/etc/sysctl.d/99-hao-swap.conf`、`/etc/security/limits.d/90-hao-nofile.conf`、
+  `/etc/systemd/journald.conf.d/hao.conf`。共享目录里放一个能看出出处的文件名
+  本身就是惯例（`50-cloud-init.cfg` 之类），对接手的人是帮助。新增 drop-in 沿用
+  这个风格，别再发明第三种。
 
 ### 不在本 skill 范围内的事
 
@@ -138,8 +169,8 @@ HAO 只装**通用的运维底座**：Web 服务器、运行时、容器引擎�
 - 容器端口一律绑 `127.0.0.1`，对外只走 Nginx 反代。
 - 服务目录放 `/opt/<服务名>`，和站点源码同一套约定。
 
-反代和证书照 `references/site.md` 第 4 节做（含 certbot 签发与续期钩子），
-`@@CONF_NAME@@` 用域名、`@@SITE_ID@@` 用服务名。
+反代和证书照 `references/site.md` 第 4 节做（含 certbot 签发；续期钩子由 nginx
+模块安装），模板里的占位符按那一节的总表全部替换掉，写完 `grep -n '@@[A-Z]'` 查一遍。
 收尾同样要 `hao-state.sh record` + `intent` + `handoff`。
 
 ### 5. 验证
@@ -148,7 +179,8 @@ HAO 只装**通用的运维底座**：Web 服务器、运行时、容器引擎�
 
 - 服务：`systemctl is-active`，以及端口真的在监听
 - Nginx：`nginx -t` 通过，且 reload 成功
-- 站点：能取到预期内容
+- 站点：**真的取一次内容**（`curl -sS -o /dev/null -w '%{http_code}' -H "Host: $DOMAIN" http://127.0.0.1/`），
+  不是 2xx/3xx 就停下
 - 调优项：回读实际生效值（例如 BBR 要看 `sysctl -n net.ipv4.tcp_congestion_control`）
 
 失败就停下来如实汇报，把原始输出给用户。
@@ -156,35 +188,31 @@ HAO 只装**通用的运维底座**：Web 服务器、运行时、容器引擎�
 ### 6. 记录状态并交接（不可跳过）
 
 ```bash
-"$SKILL/scripts/hao-state.sh" record <service> installed OWNERSHIP:PATH ...
+"$SKILL/scripts/hao-state.sh" record <service> <result> OWNERSHIP:PATH ...
 "$SKILL/scripts/hao-state.sh" intent <service> key=value ...    # 用户给的那些回答
-"$SKILL/scripts/hao-state.sh" handoff
+"$SKILL/scripts/hao-state.sh" handoff --user <目标用户>
 ```
 
 这一步是整个 skill 存在的理由之一：机器和会话都是即用即抛的，只有主机上的
-记录能让下一个 agent 接手。归属类别怎么选、交接文档写了什么，
-见 `references/handoff.md`。
+记录能让下一个 agent 接手。归属类别怎么选、`<result>` 五个词怎么选、
+`--user` 为什么不能省（默认是 `${SUDO_USER:-root}`，以 root 直跑时指针块只会写进
+`/root`），都见 `references/handoff.md`。
 
-`record` 记的是**这台机器现在是什么样**（资源路径、归属、哈希），机器销毁就没了。
-`intent` 记的是**怎么再造一台一样的**（仓库、域名、类型、分支、构建命令这些
-用户给的回答）——这是唯一值得带离本机的东西，所以收尾必须让用户把
-`/var/lib/hao/DEPLOY-INTENT.md` 存到他自己的笔记或仓库里。
-**意图文件里绝不能有凭据**，脚本会拒绝明显是密钥的 key 名。
-
-**一个 service ID 只有一条记录**，`record` 是整体替换而不是追加。所以同一模块
-可以部署多份的东西（站点就是），service ID 必须带上实例标识：`site-blog`、
-`site-shop`，而不是都记成 `site`——都记成 `site` 会让先部署的那个静默从状态里
-消失，之后 `drift` 再也不检查它。`intent` 用同一个 service ID。
+`record` 记的是**这台机器现在是什么样**（资源路径、归属、哈希），机器销毁就没了；
+它会静默跳过不存在的路径并打印一行"跳过"——那行是证据，说明某一步没做成。
+`intent` 记的是**怎么再造一台一样的**（用户给的那些回答），**一个 service ID
+只有一条记录**（`record` 是整体替换），所以能部署多份的东西必须带实例标识
+（`site-blog` 而不是 `site`）。这两条的完整理由在 `references/handoff.md`。
 
 ## 三个必须走脚本的地方
 
 其余步骤你直接用 shell 命令做就行。只有这三类事情不能即兴发挥：
 
-| 脚本 | 为什么不能自己来 |
-|---|---|
-| `scripts/hao-secret.sh` | 密钥值绝不能进入对话记录。它负责生成、复用、注入，你只看到路径和 key 名 |
-| `scripts/hao-state.sh` | 下一个 agent 要能**信任**状态记录。格式漂了，交接契约就废了 |
-| `scripts/hao-guard.sh` | 覆盖前的归属判断。全部只读，返回 `foreign` 就必须停 |
+| 脚本 | 为什么不能自己来 | 退出码怎么读 |
+|---|---|---|
+| `scripts/hao-secret.sh` | 密钥值绝不能进入对话记录。它负责生成、复用、注入，你只看到路径和 key 名 | `has` 的退出码就是答案 |
+| `scripts/hao-state.sh` | 下一个 agent 要能**信任**状态记录。格式漂了，交接契约就废了 | `drift` 非 0 = 有漂移，别用 `&&` 串 |
+| `scripts/hao-guard.sh` | 覆盖前的归属判断。全部只读，返回 `foreign` 就必须停 | 只表示脚本跑通了；结论在 stdout，`foreign` 也是 0 |
 
 三个脚本都支持 `-h` 查看用法。
 
@@ -193,10 +221,10 @@ HAO 只装**通用的运维底座**：Web 服务器、运行时、容器引擎�
 完整版见 `references/safety.md`，最关键的四条：
 
 1. **改系统之前先讲清楚并取得确认**，只读检查不需要确认。
-2. **`foreign` / `not-git` / `remote-mismatch` 一律停下**，绝不覆盖别人的东西，
-   绝不 `rm -rf` 用户的目录。
-3. **凭据只报路径**，永不打印内容；用户自带密钥走 `@file:` / `@env:`，
-   不要放进命令行参数。
+2. **`foreign` / `not-git` / `remote-mismatch` / `other <issuer>` 一律停下**，
+   绝不覆盖别人的东西，绝不 `rm -rf` 用户的目录。
+3. **凭据只报路径**，永不打印内容；用户自带密钥走 `@file:`（`@env:` 见
+   `references/safety.md` 的说明），不要放进命令行参数。
 4. **如实汇报**。失败说失败，降级说降级，没生效说没生效。
 
 ## 收尾汇报

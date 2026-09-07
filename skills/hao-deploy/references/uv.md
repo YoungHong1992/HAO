@@ -67,12 +67,18 @@ EOF
 
 ```bash
 uv --version
-"$SKILL/scripts/hao-state.sh" record uv installed observed:/usr/local/bin/uv
+"$SKILL/scripts/hao-state.sh" record uv installed \
+    observed:/usr/local/bin/uv \
+    observed:/usr/local/bin/uvx
+"$SKILL/scripts/hao-state.sh" intent uv \
+    target_user="$TARGET_USER" python_version="${PY_VERSION:-未预装}"
 "$SKILL/scripts/hao-state.sh" handoff
 ```
 
-`uv` 二进制记 `observed`：升级会变。约定块写在用户的指令文件里，
-那些文件属于用户，也不记 managed。
+两个二进制都要记：官方脚本同时装 `uv` 和 `uvx`，只记一个的话另一个成了无主文件。
+两者都记 `observed`——升级会换掉它们，记 `managed` 会让 `drift` 天天误报。
+
+约定块写在用户的指令文件里，那些文件属于用户，也不记 managed。
 
 ## 汇报给用户
 

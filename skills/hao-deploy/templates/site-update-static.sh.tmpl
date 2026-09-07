@@ -12,6 +12,12 @@
 #   - 值里若含单引号，必须写成 '\'' 转义形式，否则生成的脚本语法错误。
 #   - @@OUTPUT_DIR@@ 为 "." 时会发布仓库根目录，并自动排除 .git。
 #   - @@DOCROOT@@ = /var/www/<域名>，无域名时 /var/www/<站点ID>。
+#
+# 占位符（**八个全都要替换**；写入后必须 `grep -n '@@[A-Z]' <目标文件>` 确认为空）:
+#   @@SITE_ID@@ @@BRANCH@@ @@TARGET_USER@@ @@TARGET_GROUP@@ @@TARGET_HOME@@
+#   @@BUILD_CMD@@ @@OUTPUT_DIR@@ @@DOCROOT@@
+# 都在下面的变量赋值里，一眼能对完。注意 @@TARGET_USER@@ 不是 $USER ——
+# 那个变量在 root shell 里恒为 root（见 references/site.md 第 0 节）。
 set -euo pipefail
 
 SITE_ID='@@SITE_ID@@'
@@ -51,15 +57,45 @@ if [ -n "$BUILD_CMD" ]; then
     run_as_target env CI=true bash -c "cd $CLONE_DIR && $BUILD_CMD"
 fi
 
+# 发布之前先校验产物 —— 顺序是刻意的。
+# 以前这里是「先 find -delete 清空 docroot，再 cp」，于是产物目录填错（最常见的
+# 配置错误）或构建静默产出空目录时，线上内容已经先被删掉了，`cp` 才报错，
+# 站点直接变 404。而这个脚本是无人值守跑的，没人在旁边看。
+SRC="$CLONE_DIR/$OUTPUT_DIR"
+case "$OUTPUT_DIR" in
+    /*|*..*) echo "[ERROR] 产物目录必须是仓库内的相对路径，且不能含 '..': $OUTPUT_DIR" >&2; exit 1 ;;
+esac
+[ -d "$SRC" ] || { echo "[ERROR] 产物目录不存在: $SRC（构建失败？OUTPUT_DIR 填错？）" >&2; exit 1; }
+[ -n "$(ls -A "$SRC" 2>/dev/null)" ] || { echo "[ERROR] 产物目录是空的: $SRC，拒绝用空内容覆盖线上站点" >&2; exit 1; }
+
+# 发布到旁边的新目录再整体换过去：中途失败时线上目录一直是完整的旧版本。
 log "发布静态文件到 $WEB_DIR ..."
-install -d -m 0755 "$WEB_DIR"
-find "$WEB_DIR" -mindepth 1 -delete
-cp -a "$CLONE_DIR/$OUTPUT_DIR/." "$WEB_DIR/"
+STAGE="${WEB_DIR}.new.$$"
+OLD="${WEB_DIR}.old.$$"
+# 中途失败（构建产物坏了、磁盘满了）要把临时目录带走，否则 /var/www 下会攒出
+# 一堆 <docroot>.new.<pid>，下一个来看的人根本分不清哪个是线上的。
+cleanup_stage() { rm -rf "$STAGE"; }
+trap cleanup_stage EXIT
+rm -rf "$STAGE"
+install -d -m 0755 "$STAGE"
+cp -a "$SRC/." "$STAGE/"
 if [ "$OUTPUT_DIR" = "." ]; then
-    rm -rf "$WEB_DIR/.git"
+    rm -rf "$STAGE/.git"
 fi
-chown -R "$TARGET_USER:$TARGET_GROUP" "$WEB_DIR"
-chmod 755 "$WEB_DIR"
+chown -R "$TARGET_USER:$TARGET_GROUP" "$STAGE"
+chmod 755 "$STAGE"
+
+if [ -d "$WEB_DIR" ]; then
+    mv "$WEB_DIR" "$OLD"
+fi
+if ! mv "$STAGE" "$WEB_DIR"; then
+    # 换名失败（极少见，同一文件系统内的 rename）。把旧目录放回去，宁可不更新
+    # 也不能让站点空着。
+    [ -d "$OLD" ] && mv "$OLD" "$WEB_DIR"
+    echo "[ERROR] 发布失败，已还原原有内容" >&2
+    exit 1
+fi
+rm -rf "$OLD"
 
 log "重载 Nginx ..."
 if ! systemctl reload nginx 2>/dev/null; then

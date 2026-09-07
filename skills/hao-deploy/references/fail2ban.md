@@ -62,6 +62,8 @@ fail2ban-client status sshd        # 必须列出 jail 状态
 ```bash
 "$SKILL/scripts/hao-state.sh" record fail2ban installed \
     managed:/etc/fail2ban/jail.d/hao-sshd.local
+"$SKILL/scripts/hao-state.sh" intent fail2ban \
+    ssh_ports="$SSH_PORTS" maxretry=5 bantime=1h
 "$SKILL/scripts/hao-state.sh" handoff
 ```
 

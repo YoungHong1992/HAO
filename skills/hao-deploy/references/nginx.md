@@ -6,24 +6,27 @@
 ## 1. 前置检查（只读，先全部做完再动手）
 
 ```bash
-"$SKILL/scripts/hao-guard.sh" os-supported          # 必须 supported
+"$SKILL/scripts/hao-guard.sh" os-supported          # 期望 "<id> <version> supported"
 "$SKILL/scripts/hao-guard.sh" managed-file /etc/nginx/nginx.conf
 "$SKILL/scripts/hao-guard.sh" port-free 80
 "$SKILL/scripts/hao-guard.sh" port-free 443
+ss -tlnp | grep -E ':(80|443)\s' || true            # busy 时靠这条看清占用者是谁
 command -v nginx >/dev/null && nginx -v 2>&1        # 是否已装
 systemctl is-active nginx 2>/dev/null || true       # 是否在跑
 ```
 
 判断规则：
 
-- `os-supported` 返回 unsupported：停下来告诉用户。支持的是 Debian 13/12 与
-  Ubuntu 26.04/24.04/22.04 LTS。不要在别的系统上硬装。
+- `os-supported` 的输出是三段（`ubuntu 24.04 supported`），不是单词。判断要匹配
+  结尾：`case "$(...)" in *" supported") ;; *) 停下 ;; esac`。返回 unsupported
+  就停下来告诉用户。支持的是 Debian 13/12 与 Ubuntu 26.04/24.04/22.04 LTS。
 - **已装且健康**（`nginx -t` 通过且服务 active）：默认**不要**覆盖
   `/etc/nginx/nginx.conf`。告诉用户 Nginx 已就绪，问清是否真的要重写主配置。
   只有用户明确同意才继续第 3 步；否则跳到第 4 步只加站点配置。
 - `managed-file /etc/nginx/nginx.conf` 返回 `foreign`：这份主配置不是 HAO 写的。
   覆盖会丢掉别人的配置，必须先备份并取得用户确认。
-- 80/443 被别的进程占用（非 nginx）：停下来问用户，不要杀进程。
+- 80/443 `busy` 时用上面那条 `ss -tlnp` 看占用者（`port-free` 只回答 free/busy，
+  说不出是谁）。不是 nginx 就停下来问用户，不要杀进程。
 
 ## 2. 系统调优（可独立于 Nginx 安装先做）
 
@@ -125,10 +128,29 @@ HAO 不再有自己的 `/etc/nginx/ssl`。
 
 后两个是共享片段，被各站点 `include`，只写一份。
 
-`ssl-hardening.conf` 里**只有 HSTS**。协议版本、密码套件、会话缓存那些交给
-certbot 自带的 `/etc/letsencrypt/options-ssl-nginx.conf`——它随 certbot 升级，
-而且比 HAO 以前那份好（HAO 旧模板里还留着 `3DES`，`ssl_session_tickets` 也是
-`on`，不利于前向保密）。两处都写会让人不知道哪个生效。
+`ssl-hardening.conf` 是 **TLS 配置的唯一权威处**：协议、套件、会话、HSTS 都在里面。
+**不要**让站点 vhost 去 include `/etc/letsencrypt/options-ssl-nginx.conf`，也不要加
+`ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem`。那两个文件是
+`python3-certbot-nginx` 插件的产物（`dpkg -S options-ssl-nginx.conf` 一查就知道），
+而本 skill 只装 `certbot` 并用 `certonly`——它们在这样的机器上**永远不会出现**，
+include 一个不存在的文件会让 `nginx -t` 失败，而且失败发生在证书**签发成功之后**，
+现象和原因看起来毫不相关。所有 TLS 参数都在 `ssl-hardening.conf` 里
+（内容取自 Mozilla intermediate，去掉了 DHE 套件，所以也不需要 dhparam）。
+
+### certbot 续期后重载 Nginx 的钩子
+
+装在这里而不是 site 模块：它对**所有**证书生效，和某一个站点无关。
+逐字安装，无占位符：
+
+```bash
+install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+install -m 0755 "$SKILL/templates/certbot-deploy-hook.sh.tmpl" \
+    /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+```
+
+放这个目录而不是用 `--deploy-hook`：任何运维都能在这里找到它，也不用在每个域名的
+签发命令里重复一遍。`certbot` 还没装也可以先放——目录不存在时上面的 `install -d`
+会建好，certbot 装上后自动生效。
 
 ## 5. 测试与启动（顺序不能反）
 
@@ -149,6 +171,11 @@ nginx -V 2>&1 | grep -q http_v3_module && echo "HTTP/3 可用" || echo "HTTP/3 �
 systemctl is-active nginx
 sysctl -n net.ipv4.tcp_congestion_control
 
+# nginx.conf 的归属分两种情况填，不要一律 managed：
+#   这次真的由 HAO 写了主配置        -> managed:/etc/nginx/nginx.conf
+#   第 1 节判断为已就绪/foreign 而跳过 -> observed:/etc/nginx/nginx.conf
+# 记错的后果很具体：把别人的主配置记成 managed，下一个 agent 会理所当然地重写它
+# （见 references/handoff.md 的归属类别）。
 "$SKILL/scripts/hao-state.sh" record nginx installed \
     managed:/etc/nginx/nginx.conf \
     managed:/etc/nginx/snippets/ssl-hardening.conf \
@@ -158,8 +185,16 @@ sysctl -n net.ipv4.tcp_congestion_control
     managed:/etc/systemd/system/nginx.service.d/limits.conf \
     managed:/etc/apt/sources.list.d/nginx.list \
     managed:/etc/apt/preferences.d/99nginx \
+    managed:/usr/share/keyrings/nginx-archive-keyring.gpg \
+    managed:/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh \
     observed:/etc/nginx/conf.d
+"$SKILL/scripts/hao-state.sh" intent nginx \
+    source=nginx.org branch=stable http3="$(nginx -V 2>&1 | grep -q http_v3_module && echo yes || echo no)"
+"$SKILL/scripts/hao-state.sh" handoff
 ```
+
+`record` 会静默跳过不存在的路径并打印一行"跳过不存在的路径: …"。那行是**证据**：
+钩子或 keyring 出现在里面，说明那一步其实没做成，回去查。
 
 HTTP/3 不可用不是错误，如实汇报即可（stable 分支某些构建不带该模块）。
 
@@ -171,3 +206,7 @@ HTTP/3 不可用不是错误，如实汇报即可（stable 分支某些构建不
   先测试再重载。
 - **`nginx -t` 报 conf.d 里某个文件出错**：那是站点配置的问题，不要去改主配置，
   按 `references/site.md` 排查对应站点。
+- **`nginx -t` 报找不到 `/etc/letsencrypt/options-ssl-nginx.conf`**：某个 vhost 里
+  还留着那行 include（旧模板的遗留）。那个文件由 `python3-certbot-nginx` 提供，
+  本 skill 不装它，所以文件永远不会出现。删掉那行（以及 `ssl_dhparam
+  /etc/letsencrypt/ssl-dhparams.pem`），TLS 参数在 `snippets/ssl-hardening.conf` 里。

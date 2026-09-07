@@ -49,6 +49,7 @@ if [ ! -e /etc/apt/keyrings/nodesource.gpg ]; then
         | gpg --batch --dearmor > /tmp/nodesource.gpg
     [ -s /tmp/nodesource.gpg ] || { echo "GPG key 为空，中止"; exit 1; }
     install -m 0644 /tmp/nodesource.gpg /etc/apt/keyrings/nodesource.gpg
+    rm -f /tmp/nodesource.gpg
 fi
 
 printf '# Managed by HAO\n# Service: node\ndeb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_%s.x nodistro main\n' \
@@ -79,6 +80,8 @@ command -v npm
     managed:/etc/apt/sources.list.d/nodesource.list \
     managed:/etc/apt/keyrings/nodesource.gpg \
     observed:/usr/bin/node
+"$SKILL/scripts/hao-state.sh" intent node \
+    major="$NODE_MAJOR" source=deb.nodesource.com
 "$SKILL/scripts/hao-state.sh" handoff
 ```
 

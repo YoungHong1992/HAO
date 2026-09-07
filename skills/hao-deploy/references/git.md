@@ -58,8 +58,15 @@ run_as_target git config --global user.email "$GIT_EMAIL"
 ```
 
 作用域是 repository 就改用 `git -C "$REPO_DIR" config --local`，并先确认那个目录
-真的是个 Git 仓库（`"$SKILL/scripts/hao-guard.sh" repo-identity`，返回
-`not-git` 就停下）。
+真的是个 Git 仓库：
+
+```bash
+run_as_target git -C "$REPO_DIR" rev-parse --is-inside-work-tree   # 期望输出 true
+```
+
+**这里不要用 `hao-guard.sh repo-identity`** —— 它要两个参数（`<dir> <expected_remote>`），
+少给会直接报错退出；而"这个目录是不是仓库"这个问题本来也不需要知道预期 remote。
+`repo-identity` 是给 site 流程用的（那里确实有预期 remote）。
 
 ## 4. 验证
 
@@ -76,8 +83,14 @@ run_as_target git config --global --get user.email
 ```bash
 "$SKILL/scripts/hao-state.sh" record git installed \
     "shared:$TARGET_HOME/.gitconfig"
+"$SKILL/scripts/hao-state.sh" intent git \
+    target_user="$TARGET_USER" scope=global \
+    git_name="$GIT_NAME" git_email="$GIT_EMAIL"
 "$SKILL/scripts/hao-state.sh" handoff
 ```
+
+身份进意图文件是刻意的：它本来就会出现在每个 commit 里，不是密钥，而换机器时
+必须原样重放（猜错要改历史）。
 
 `.gitconfig` 记 `shared` 而不是 `managed`：这是用户的文件，我们只写了
 `user.name` 和 `user.email` 两个键，下一个 agent 不能整体重写它。作用域是

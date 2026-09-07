@@ -24,6 +24,9 @@ fi
 printf '== skill structure ==\n'
 "$ROOT_DIR/tests/test-skill-structure.sh"
 
+printf '== site 更新脚本（渲染后真的跑一遍）==\n'
+"$ROOT_DIR/tests/test-site-update.sh"
+
 printf '== hao-guard ==\n'
 "$ROOT_DIR/tests/test-guard.sh"
 
@@ -38,6 +41,9 @@ printf '== generic skill (runtime-neutral) ==\n'
 
 printf '== hidden modules ==\n'
 "$ROOT_DIR/tests/test-hidden-modules.sh"
+
+printf '== science module (offline render + refusals) ==\n'
+"$ROOT_DIR/tests/test-science.sh"
 
 if command -v claude >/dev/null 2>&1; then
   printf '== plugin manifest validation ==\n'

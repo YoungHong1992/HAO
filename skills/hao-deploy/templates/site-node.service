@@ -17,6 +17,16 @@
 #
 # @@EXTRA_ENV@@ 是可选的额外环境变量，每行一条 Environment="KEY=VALUE"，
 # 放在 PORT 之后，因此同名时用户值覆盖默认值。不要在这里设 PORT。
+#
+# 占位符（**七个全都要替换**；写入后必须 `grep -n '@@[A-Z]' <目标文件>` 确认为空）:
+#   @@SITE_ID@@     站点 ID，同时是单元名和 /opt 下的目录名，也是归属标记
+#   @@TARGET_USER@@ 运行用户（不是 $USER —— 那个变量在 root shell 里恒为 root，
+#                   见 references/site.md 第 0 节）
+#   @@TARGET_HOME@@ 该用户的 home，给 HOME 环境变量用
+#   @@NODE_BIN@@    必须是 /usr/bin/node
+#   @@START_FILE@@  入口文件，默认 server.js
+#   @@PORT@@        监听端口，必须和 nginx 内容块里的 @@PORT@@ 一致
+#   @@EXTRA_ENV@@   额外环境变量；没有就整行删掉（留空行也行，但别留占位符）
 [Unit]
 Description=@@SITE_ID@@ (Node.js application, deployed by HAO)
 After=network.target

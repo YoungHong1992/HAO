@@ -110,8 +110,8 @@ dig +short your-domain.com
 3. 放到 Debian 的标准位置：证书 `/etc/ssl/certs/<域名>.pem`（权限 644），
    私钥 `/etc/ssl/private/<域名>.key`（权限 600）
 4. 改 vhost 里的 `ssl_certificate` / `ssl_certificate_key` 指向这两个文件，
-   并**删掉** `options-ssl-nginx.conf` 与 `ssl-dhparams.pem` 两行 include
-   （那是 certbot 提供的，不签发就不存在）
+   其余不用动（协议、套件、HSTS 都在 `/etc/nginx/snippets/ssl-hardening.conf` 里，
+   和证书来源无关）
 5. 将 Cloudflare SSL 模式设为 **Full (strict)**
 
 用 Origin Certificate 就不要再让 certbot 签发同一个域名了，两套证书并存只会

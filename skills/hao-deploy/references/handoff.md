@@ -33,7 +33,12 @@
 | 类别 | 可再生？ | 该被读到？ | 位置 |
 |---|---|---|---|
 | 状态索引、交接文档、意图 | 是（重跑 `record` / `intent`） | 是（0644） | `/var/lib/hao` |
-| 凭据 | **否**（重新生成等于换密码） | 否（0600，目录 0700） | `/etc/hao` |
+| 凭据 | **否**（重新生成等于换密码） | 否（0600，目录新建时 0700） | `/etc/hao` |
+
+凭据目录的权限有一个前提要说清：`hao-secret.sh` 只在**目录不存在**时用 0700 新建；
+目录已经存在时它**只告警、不改权限**（目标可能是 `/etc/foo.env` 这种直接落在 `/etc`
+下的路径，chmod 会把 `/etc` 改成 0700，后果比元信息泄露严重得多）。
+所以看到那条告警要照它的建议手动 `chmod 0700 <目录>`，不要以为脚本已经处理了。
 
 `/var/lib` 按惯例是"可丢弃的再生状态"，备份和配置管理经常整体排除它；凭据丢了
 服务就废了，不能和可再生的东西共命运。而且 `/var/lib/hao` 里的 `NOTICE`、
@@ -73,7 +78,28 @@ vhost 在 `/etc/nginx`、单元文件在 `/etc/systemd/system`、apt 源在 `/et
 }
 ```
 
-`result` 取值：`installed` `updated` `verified` `failed` `skipped`。
+`result` 取值：`installed` `updated` `verified` `failed` `skipped`。怎么选：
+
+| 情况 | 用哪个 |
+|---|---|
+| 第一次装好 | `installed` |
+| 已经装过、这次重新部署或改了配置 | `updated` |
+| 只做了检查、没改任何东西 | `verified` |
+| 中途失败，机器处于半成品状态 | `failed`（**要记**，别只在对话里说） |
+| 归属检查拦住了，或用户拒绝了 | `skipped` |
+
+一律写 `installed` 会让下一个 agent 无法判断这台机器上次到底发生了什么。
+
+### `record` 只记录**当时真的存在**的路径
+
+不存在的路径会被静默丢掉，并在输出里打一行 `跳过不存在的路径: …`。
+那行不是提示，是**证据**：它说明你以为写好的文件其实没写成（或路径写错了）。
+看到它就回去查那一步，不要继续往下走。
+
+### `ownership <service>`
+
+回答"这个服务归谁"最省事的一条命令，输出是归属类别，服务没记录过时输出 `untracked`。
+`drift` 之前想快速确认"我能不能动这个"就用它。
 
 ## 归属类别（决定你能对一个资源做什么）
 
@@ -123,12 +149,23 @@ nginx 配置和更新脚本，`HANDOFF.md` 里也只剩一行。等到有人手�
    用 `--agent-file PATH` 显式指定（可重复）。
 
 第 2 步是整套设计的关键：**下一个 agent 不需要被谁告知，开机就知道这台机器
-由 HAO 管理**。标记块用 `<!-- HAO-HANDOFF BEGIN/END -->` 包裹，重复运行原地
+由 HAO 管理**。标记块用
+`<!-- HAO-HANDOFF BEGIN (managed by HAO, do not edit inside) -->` 与
+`<!-- HAO-HANDOFF END -->` 包裹（手工要删块时按这两行**原文**去找），重复运行原地
 替换，块外的用户内容一律保留。发现标记只剩单边（文件被手工改坏）会拒绝写入
 而不是吞掉内容。
 
-不想写指令文件时用 `--skip-agent-files`；要指定文件用 `--agent-file PATH`
-（可重复）。
+**默认写进谁的指令文件：`${SUDO_USER:-root}`。** 以 root 直接跑（新买的 VPS 上
+最常见）时它就是 root，于是只会去 `/root` 下找 `AGENTS.md` / `CLAUDE.md`，
+用户自己家目录里的那份**收不到指针块**，而输出只会说一句"未检测到已安装的 AI 助手"。
+所以目标用户不是 root 时必须显式传：
+
+```bash
+"$SKILL/scripts/hao-state.sh" handoff --user "$TARGET_USER"
+```
+
+用和 `convention` 同一个用户。不想写指令文件时用 `--skip-agent-files`；
+runtime 的位置不在检测范围内时用 `--agent-file PATH`（可重复）。
 
 ## 接手一台已有机器时
 
@@ -145,45 +182,14 @@ cat /var/lib/hao/HANDOFF.md                      # 先读这个
 停下来把差异讲给用户听，让用户决定是保留手工改动还是按 HAO 流程重写。
 直接覆盖会静默丢掉那些改动——这类丢失通常几周后才被发现。
 
-`drift` 退出码：0 = 无漂移，非 0 = 有漂移。
+`drift` 退出码：0 = 无漂移，非 0 = 有漂移。**所以不要用 `drift && 下一步` 串命令**——
+有漂移时后面那步会被静默跳过，而那正是最需要人介入的时候。
 
-### 碰到已经不存在的模块名
-
-早期版本把多个工具打包成一个模块，所以旧机器上可能有这些 service ID：
-
-| 旧 service ID | 现在对应的模块 |
-|---|---|
-| `maintenance` | `fail2ban` + `swap` + `journald`，Docker 日志轮转归 `docker` |
-| `git-github` | `git` + `gh` |
-
-**没有自动迁移**，也不要就着旧 ID 继续 `record` —— 那会让状态里同时存在两套命名，
-下一个 agent 无从判断哪个是真的。碰到时这样处理：
-
-```bash
-# 1. 先看旧记录里都有什么资源，按新模块归类
-cat /var/lib/hao/services/maintenance.resources
-
-# 2. 按新模块各记一条（路径照旧记录里的，别凭记忆写）
-"$SKILL/scripts/hao-state.sh" record fail2ban installed managed:/etc/fail2ban/jail.d/hao-sshd.local
-"$SKILL/scripts/hao-state.sh" record journald installed managed:/etc/systemd/journald.conf.d/hao.conf
-"$SKILL/scripts/hao-state.sh" record swap     installed managed:/etc/sysctl.d/99-hao-swap.conf shared:/etc/fstab
-
-# 3. 确认新记录都在了，再删旧的
-rm -f /var/lib/hao/services/maintenance.json \
-      /var/lib/hao/services/maintenance.resources \
-      /var/lib/hao/services/maintenance.intent
-"$SKILL/scripts/hao-state.sh" handoff
-```
-
-顺序不能颠倒：先记新的再删旧的，中途失败也不会丢掉资源清单。
-
-主机上的文件本身**不用动**（路径没变，只是归属记录换了名字），但那几个文件的
-`# Service: maintenance` 注释头会和新记录对不上。`hao-guard.sh` 判归属只看
-`Managed by HAO`，所以不影响拒绝覆盖的保证；重写那个文件时顺手把头改对即可。
-
-`git-github` 还多一件事：agent 指令文件里的 `<!-- HAO-GIT-GITHUB BEGIN/END -->`
-块不会被 `convention HAO-GH` 替换（标记名就是块的身份），所以会**多出一个块**。
-手工删掉旧的那个，从 BEGIN 到 END 连同标记一起删，块外内容不要动。
+**`drift` 只比对 `managed` 资源。** `shared`（如 `/etc/fstab`、`.gitconfig`）、
+`observed`（如 `/opt/<站点>`、`/usr/bin/node`）、`secret`（凭据）都不参与比对：
+前两类的内容本来由别人决定，后一类不记哈希。所以"drift 干净"的含义是
+"HAO 自己写的文件没被人动过"，不等于"这台机器没被人动过"。
+一个 `managed` 资源都没有的服务（例如 `uv`）永远显示正常。
 
 ## 机器销毁后还剩什么
 
@@ -198,19 +204,25 @@ rm -f /var/lib/hao/services/maintenance.json \
     domain="$DOMAIN" \
     build_cmd="$BUILD_CMD" \
     output_dir="$OUTPUT" \
-    run_user="$USER" \
+    run_user="$TARGET_USER" \
     cert=letsencrypt
 ```
 
 规则：
 
-- key 只允许小写字母、数字、下划线；service ID 和 `record` 用同一个
+- key 必须**以小写字母开头**，其余只能是小写字母、数字、下划线（`^[a-z][a-z0-9_]*$`）。
+  `2fa_mode` 这种以数字开头的会被拒。service ID 和 `record` 用同一个
   （站点是 `site-<id>`），这样卸载时删 `services/<svc>.*` 会把意图一起带走。
-- **凭据一律不许进去。** key 名里带 `password` / `token` / `secret` / `apikey` 之类的
-  会被直接拒绝——这份文件是 0644 且要交给用户带走的。
+- **凭据一律不许进去。** key 名里**含有** `password` / `passwd` / `token` / `secret` /
+  `apikey` / `api_key` / `credential` / `private_key` 任一子串的会被直接拒绝——
+  这份文件是 0644 且要交给用户带走的。匹配是子串而非整词，所以 `token_ttl`、
+  `password_policy` 这类无害的名字也会被拒，换个词（`ttl_seconds`、`login_policy`）。
 - 仓库地址里内嵌的凭据会被自动脱敏成 `***`，落盘和文档里都不会有原值。
   重放时需要用户重新提供。
 - `intent` 会重建 `DEPLOY-INTENT.md`；`handoff` 也会重建一次，所以顺序无所谓。
+- **凡是问过用户的回答都要记**，不是只有 site 模块要记：git 的身份、gh 的目标用户与
+  授权方式、claude-code 的网关与模型、node 的主版本、swap 的大小、uv 的 Python 版本、
+  fail2ban 的 SSH 端口，各模块的 reference 里都给了对应的 `intent` 行。
 
 **收尾汇报必须让用户把 `DEPLOY-INTENT.md` 存到他自己的笔记或仓库里。**
 有了它，在一台新机器上重放一遍就能得到等价的部署——这就是"即用即抛"成立的前提。
