@@ -103,14 +103,14 @@ certbot delete --cert-name <域名>     # 确认后再删
   `systemctl restart systemd-journald`。上限没了之后日志会重新按磁盘 10% 增长。
 - **git**：卸包或保留都行。`~/.gitconfig` 是 `shared`——只删我们写的
   `user.name` / `user.email`（`git config --global --unset`），**不要删整个文件**。
-- **gh**：删 `/usr/local/bin/hao-github-authorize`、
+- **gh**：删 `/usr/local/bin/github-authorize`、
   `/etc/apt/sources.list.d/github-cli.list`、
   `/etc/apt/keyrings/githubcli-archive-keyring.gpg`，按需 `apt-get remove gh`。
   用户的 gh 登录凭据在他自己的 `~/.config/gh/` 下，要不要清由他决定；
   真要撤销授权得让他自己去 GitHub 的 Settings → Applications 里撤。
 - **node / uv / claude-code**：卸包或删二进制。
-- 写进 AI 助手指令文件的约定块用标记包裹（`HAO-UV` / `HAO-GH` / `HAO-HANDOFF`；
-  旧机器上可能还叫 `HAO-GIT-GITHUB`），手工删掉 BEGIN 到 END 之间连同标记本身，
+- 写进 AI 助手指令文件的约定块用标记包裹（`HAO-UV` / `HAO-GH` / `HAO-HANDOFF`），
+  手工删掉 BEGIN 到 END 之间连同标记本身，
   块外内容不要动。BEGIN 行的原文形如
   `<!-- HAO-UV BEGIN (managed by HAO, do not edit inside) -->`，END 行是
   `<!-- HAO-UV END -->` —— 按原文去搜，别按简写搜（见 `references/handoff.md`）。

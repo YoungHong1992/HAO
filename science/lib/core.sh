@@ -90,8 +90,8 @@ install_xray_binary() {
 }
 
 # ==================== 单元与目录 ====================
-# 归属检查：官方安装脚本和本工具旧版本写的 unit 都没有 HAO 头，都会判成 foreign。
-# 那是对的，不能默默覆盖 —— 旧版本的机器走显式的 `install.sh migrate`。
+# 归属检查：别人（例如 Xray 官方安装脚本）写的 unit 没有 HAO 头，会判成 foreign。
+# 那是对的，不能默默覆盖别人装的东西。
 require_unit_ownership() {
     local result
     result="$(guard unit-free xray)"
@@ -104,10 +104,6 @@ require_unit_ownership() {
             ;;
         foreign*)
             log_error "/etc/systemd/system/xray.service 已存在，但不是本工具写的（$result）。"
-            if [ -f "$XRAY_LEGACY_CONF" ]; then
-                log_error "同时发现旧版单文件配置 $XRAY_LEGACY_CONF —— 这台机器是旧版本装的。"
-                die "先跑迁移，它会保留现有密钥和 UUID（客户端不用改）： sudo $0 migrate"
-            fi
             die "可能是 Xray 官方安装脚本装的。不覆盖别人的东西。要接管就先自己停掉并移走那个单元，或换一台机器。"
             ;;
         *)

@@ -134,9 +134,8 @@ HAO 不再有自己的 `/etc/nginx/ssl`。
 `python3-certbot-nginx` 插件的产物（`dpkg -S options-ssl-nginx.conf` 一查就知道），
 而本 skill 只装 `certbot` 并用 `certonly`——它们在这样的机器上**永远不会出现**，
 include 一个不存在的文件会让 `nginx -t` 失败，而且失败发生在证书**签发成功之后**，
-现象和原因看起来毫不相关。旧版本模板犯过这个错，现在参数已经合并进
-`ssl-hardening.conf`（内容取自 Mozilla intermediate，去掉了 DHE 套件，
-所以也不需要 dhparam）。
+现象和原因看起来毫不相关。所有 TLS 参数都在 `ssl-hardening.conf` 里
+（内容取自 Mozilla intermediate，去掉了 DHE 套件，所以也不需要 dhparam）。
 
 ### certbot 续期后重载 Nginx 的钩子
 

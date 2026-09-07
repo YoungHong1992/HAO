@@ -576,7 +576,7 @@ node 类型不填 `build_cmd`/`output_dir`，static 类型不填 `entry`，留�
   再让用户去开安全组。
 - **`nginx -t` 报找不到 `/etc/letsencrypt/options-ssl-nginx.conf`**：那个文件由
   `python3-certbot-nginx` 提供，而本 skill 不装那个插件，所以**它永远不会出现**。
-  说明 vhost 里还有那行 include（旧版本模板的遗留）——删掉它，TLS 参数在
+  说明 vhost 里多了一行不该有的 include——删掉它，TLS 参数在
   `snippets/ssl-hardening.conf` 里。`ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem`
   同理。**这跟证书签没签成功无关**，别去查 certbot。
 - **`nginx -t` 报某个 `@@TOKEN@@` 附近语法错误**：占位符没替换完，

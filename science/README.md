@@ -160,24 +160,6 @@ sudo /usr/local/bin/xray run -test -confdir /usr/local/etc/xray/conf.d   # 相�
 可以用这台机器当跳板去打只监听 `127.0.0.1` 的本机服务 —— 那些服务往往因为
 「只有本机能连」而根本没设密码。
 
-## 旧版本装的机器
-
-旧版本是单文件 `/usr/local/etc/xray/config.json` + `-config` 启动。先迁移：
-
-```bash
-sudo ./install.sh migrate
-```
-
-它会把现有的私钥、UUID、shortId **原样搬进凭据文件**（你现有的客户端不用改配置），
-写好新布局，`-test` 通过后才重启，旧配置改名成 `config.json.pre-confdir.bak` 留着。
-
-另外：旧版本会在这个目录里留下一个 `reality_node_info.txt`，**里面是活的 UUID**。
-确认新的 `/etc/hao/xray-reality.client.txt` 已经生成之后把它删掉：
-
-```bash
-rm -f science/reality_node_info.txt
-```
-
 ## 卸载
 
 ```bash

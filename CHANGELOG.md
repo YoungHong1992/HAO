@@ -33,16 +33,6 @@ HAO 通过插件市场分发（`.claude-plugin/marketplace.json`）。
 | `# Service:` 头 | `maintenance` / `git-github` | 对应的新模块名 |
 | 约定标记 | `HAO-GIT-GITHUB` | `HAO-GH` |
 
-**不提供自动迁移。** 旧机器上的 `services/maintenance.json`、`git-github.json`
-保持原样，主机上的文件路径一个都没变（只有文件里的 `# Service:` 注释头和新记录
-对不上，不影响 `hao-guard.sh` 判归属——它只看 `Managed by HAO`）。接手旧机器的
-处理步骤写进了 `references/handoff.md`「碰到已经不存在的模块名」：按新模块重新
-`record`，确认之后再删旧记录，顺序不能颠倒。
-
-约定标记改名有一个具体后果：`write_marker_block` 以标记名为块身份，所以旧机器上
-`<!-- HAO-GIT-GITHUB -->` 那个块不会被 `convention HAO-GH` 替换，会**多出一个块**，
-需要手工删掉旧的。同样写在 `handoff.md` 里。
-
 ### 破坏性变更：插件安装名统一成 `hao`
 
 对外露出来的名字原来是四个并存：市场叫 `hao`、市场里的插件条目叫 `hao-deploy`、
@@ -57,14 +47,6 @@ HAO 通过插件市场分发（`.claude-plugin/marketplace.json`）。
 
 **skill 仍叫 `hao-deploy`**，目录也还是 `skills/hao-deploy/`：插件是产品、skill 是
 能力，以后再加第二个 skill（备份、监控之类）时这个分工才立得住。
-
-已经装过旧名字的机器要重装一次（插件名写在用户的 `settings.json` 的
-`enabledPlugins` 里，改名后旧条目不会自动跟着改）：
-
-```
-/plugin uninstall hao-deploy@hao
-/plugin install hao@hao
-```
 
 ### 拆分时补上的东西
 
@@ -331,7 +313,7 @@ release-readiness review. Highlights:
   re-runs). The HTTP→HTTPS redirect is explicit (`HAO_SITE_<ID>_REDIRECT`, default
   on) with a security-group 443 warning, and port 80 serves directly for
   self-signed or domain-less sites. Excluded from `--services all`.
-- **git-github**: `hao-github-authorize` now requests the `admin:public_key` scope,
+- **git-github**: `github-authorize` now requests the `admin:public_key` scope,
   registers `gh` as the Git credential helper (`gh auth setup-git`), generates an
   ed25519 keypair when missing, and uploads it via `gh ssh-key add` — printing a
   manual fallback (paste the public key in GitHub settings) when the upload fails,

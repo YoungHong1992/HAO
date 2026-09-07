@@ -33,7 +33,6 @@ EOF
 #
 # 公钥在**生成时**就一起存下来，这样重跑永远不需要 `xray x25519 -i <私钥>` ——
 # 那条命令会把私钥放进命令行参数，同机任何用户都能从 /proc/<pid>/cmdline 读到。
-# 旧版本每次重跑都这么干，这是这次要改掉的主要问题之一。
 reality_ensure_credentials() {
     local rotate="${1:-false}"
     local credfile tmpdir keyout need_generate=false k f

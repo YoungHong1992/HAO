@@ -8,7 +8,6 @@
 #   proxy      HTTPS 正向代理（用户名 + 口令）。客户端里填「https 域名 端口 用户 口令」
 #   bbr        打开 BBR 拥塞控制（主机级调优，独立装卸）
 #   status     当前装了什么、在听哪些端口、凭据文件在哪（只读）
-#   migrate    从旧版单文件 config.json 布局迁到 conf.d 布局（保留现有密钥）
 #   uninstall  按目标卸载
 #
 # 设计约定（和仓库其余模块一致，理由见根目录 CLAUDE.md）：
@@ -58,7 +57,6 @@ usage() {
                  需要一个已解析到本机的域名（要签证书）
   bbr          打开 BBR 拥塞控制
   status       看当前状态（只读，随便跑）
-  migrate      旧版单文件配置 -> conf.d 布局，保留现有密钥和 UUID
   uninstall    卸载: uninstall <reality|proxy|bbr|core|all>
 
 每个子命令都支持 -h 看自己的选项，例如:
@@ -81,7 +79,6 @@ main() {
         proxy)     cmd_proxy "$@" ;;
         bbr)       cmd_bbr "$@" ;;
         status)    cmd_status "$@" ;;
-        migrate)   cmd_migrate "$@" ;;
         uninstall) cmd_uninstall "$@" ;;
         -h|--help|help|"") usage ;;
         *) usage; die "不认识的子命令: $subcommand" ;;

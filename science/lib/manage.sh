@@ -1,10 +1,6 @@
 # shellcheck shell=bash
 #
-# science/lib/manage.sh —— status / migrate / uninstall。
-#
-# migrate 存在的理由：旧版本装出来的是单文件 config.json + `-config` 启动的单元，
-# 而且单元里没有 `# Managed by HAO` 头，所以 hao-guard.sh 会把它判成 foreign
-# （这是对的——不能默默覆盖别人的东西）。旧机器要升级就得有一条显式的路。
+# science/lib/manage.sh —— status 与 uninstall。
 
 # ==================== status ====================
 cmd_status() {
@@ -25,9 +21,6 @@ cmd_status() {
         echo "  运行:   $(systemctl is-active xray 2>/dev/null || echo inactive) / $(systemctl is-enabled xray 2>/dev/null || echo disabled)"
     else
         echo "  单元:   未安装"
-    fi
-    if [ -f "$XRAY_LEGACY_CONF" ]; then
-        echo "  ⚠ 发现旧版单文件配置 $XRAY_LEGACY_CONF —— 跑 'sudo $0 migrate' 迁到 conf.d 布局"
     fi
 
     echo ""
@@ -63,112 +56,6 @@ cmd_status() {
     echo ""
     echo "== HAO 状态记录 =="
     state services 2>/dev/null | grep -E 'xray|bbr|SERVICE' || echo "  （状态里没有相关记录）"
-}
-
-# ==================== migrate ====================
-cmd_migrate() {
-    case "${1:-}" in
-        ""|-h|--help) ;;
-        *) die "migrate 不接受参数" ;;
-    esac
-
-    require_root
-    require_skill_scripts
-    require_os
-    require_cmds curl openssl systemctl ss
-
-    [ -f "$XRAY_LEGACY_CONF" ] \
-        || die "没有找到旧版配置 $XRAY_LEGACY_CONF，不需要迁移。直接用 'reality' 或 'proxy' 子命令。"
-
-    log_step "从旧版单文件布局迁移到 conf.d"
-    cat >&2 <<EOF
-  旧布局：$XRAY_LEGACY_CONF 一个文件装所有入站，单元用 -config 启动。
-  新布局：$XRAY_CONF_DIR/ 下每个入站一个文件，单元用 -confdir 启动。
-          这样装一个入站不用重写另一个，卸一个只需删文件。
-
-  会做的事：
-    1. 从旧配置里读出 Reality 的私钥 / UUID / shortId，**原样保留**
-       —— 你现有的客户端配置不用改
-    2. 写进 $(cred_file xray-reality)（0600）
-    3. 写新单元和 $XRAY_CONF_DIR/{00-base.json,10-reality.json}
-    4. xray run -test 通过后才重启
-    5. 旧配置改名成 ${XRAY_LEGACY_CONF}.pre-confdir.bak（不删）
-EOF
-    confirm "继续迁移？" || die "已取消，什么都没改。"
-
-    local tmpdir
-    tmpdir="$(make_tmpdir)"
-    # shellcheck disable=SC2064
-    trap "rm -rf '$tmpdir'" EXIT
-
-    # 从旧配置提取三个值，直接写进临时文件，不经过 shell 变量。
-    sed -n 's/.*"privateKey"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$XRAY_LEGACY_CONF" | head -1 > "$tmpdir/private"
-    sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'         "$XRAY_LEGACY_CONF" | head -1 > "$tmpdir/uuid"
-    sed -n 's/.*"shortIds"[[:space:]]*:[[:space:]]*\["\([^"]*\)".*/\1/p' "$XRAY_LEGACY_CONF" | head -1 > "$tmpdir/shortid"
-
-    local port sni
-    port="$(sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([0-9]\{1,5\}\).*/\1/p' "$XRAY_LEGACY_CONF" | head -1)"
-    sni="$(sed -n 's/.*"serverNames"[[:space:]]*:[[:space:]]*\["\([^"]*\)".*/\1/p' "$XRAY_LEGACY_CONF" | head -1)"
-    port="${port:-8443}"
-    sni="${sni:-www.microsoft.com}"
-
-    local f
-    for f in private uuid shortid; do
-        [ -s "$tmpdir/$f" ] \
-            || die "从 $XRAY_LEGACY_CONF 里读不出 $f。这个配置可能不是本工具装的，停下来人工看一眼，不要自动改。"
-    done
-    log_success "已从旧配置读出密钥、UUID、shortId（端口 $port，伪装 $sni）"
-
-    # 公钥必须从私钥推导——这是唯一一处不得不把密钥放进命令行参数的地方。
-    # 另一条路是重新生成密钥，那会让用户所有现有客户端立刻失效，代价更大。
-    # 只在迁移时执行一次（旧版本是每次重跑都执行），之后公钥就存进凭据文件了。
-    #
-    # 二进制先装好：旧机器上一般已经有了，但万一被删过，这里得能自己补上
-    # （不能反过来让用户去跑 reality 子命令 —— 那个会因为旧单元是 foreign 而停下）。
-    install_xray_binary
-    log_warning "接下来要用 'xray x25519 -i <私钥>' 推导公钥。那一瞬间私钥会出现在进程的命令行参数里"
-    log_warning "（同机其他用户可从 /proc/<pid>/cmdline 读到）。这是保留你现有客户端的代价，且只做这一次。"
-    xray_present || die "$XRAY_BIN 装不上，无法推导公钥。先解决下载问题再迁移。"
-    "$XRAY_BIN" x25519 -i "$(cat "$tmpdir/private")" 2>/dev/null \
-        | awk '/^Password \(PublicKey\):/ { print $NF } /^PublicKey:/ { print $NF }' \
-        | head -1 > "$tmpdir/public" || true
-    [ -s "$tmpdir/public" ] || die "推导公钥失败。私钥格式不对，或 xray x25519 的输出格式变了。"
-    log_success "公钥已推导并写入凭据文件，以后不会再需要这一步"
-
-    secret write "$(cred_file xray-reality)" \
-        "PRIVATE_KEY=@file:$tmpdir/private" \
-        "PUBLIC_KEY=@file:$tmpdir/public" \
-        "UUID=@file:$tmpdir/uuid" \
-        "SHORT_ID=@file:$tmpdir/shortid" \
-        --rotate PRIVATE_KEY,PUBLIC_KEY,UUID,SHORT_ID
-
-    # 旧单元没有 HAO 头，unit-free 会判 foreign。这里是显式迁移，允许覆盖，
-    # 所以直接装模板，不再走 require_unit_ownership。
-    # （二进制在上面推导公钥之前就已经确保装好了。）
-    log_step "写入新单元与配置"
-    install_xray_unit
-    install_base_config
-
-    reality_write_fragment "$port" "$sni"
-    if ! xray_test_config; then
-        die "新配置测试未通过。旧配置还在原处（$XRAY_LEGACY_CONF），已写入的新文件需要你人工看一眼再决定。"
-    fi
-    mv "$XRAY_LEGACY_CONF" "${XRAY_LEGACY_CONF}.pre-confdir.bak"
-    log_success "旧配置已备份为 ${XRAY_LEGACY_CONF}.pre-confdir.bak"
-
-    xray_apply "$port" || die "迁移后服务没能起来。旧配置在 ${XRAY_LEGACY_CONF}.pre-confdir.bak，可以人工回退。"
-    reality_write_client_info "$port" "$sni"
-
-    state record xray-core installed \
-        "managed:$XRAY_BIN" "managed:$XRAY_UNIT" "managed:$XRAY_CONF_DIR/00-base.json"
-    state record xray-reality installed \
-        "managed:$XRAY_CONF_DIR/$REALITY_FRAGMENT_NAME" \
-        "secret:$(cred_file xray-reality)" \
-        "secret:$(client_file xray-reality)"
-    state intent xray-reality protocol=vless-reality port="$port" sni="$sni" flow=xtls-rprx-vision
-    state handoff
-
-    log_success "迁移完成，凭据和 UUID 都没变，现有客户端继续可用"
 }
 
 # ==================== uninstall ====================

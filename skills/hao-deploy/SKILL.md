@@ -137,7 +137,7 @@ reference。**不要替用户猜域名、Git 身份、仓库地址这类东西�
 `# Service:` / `# HAO-SITE:`）。`hao-guard.sh` 靠它判断归属，读的是文件内容不是
 文件名，所以通用命名不花任何代价——但**那几行注释一行都不能删**。
 
-三类例外，都不是"忘了改"：
+两类例外，都不是"忘了改"：
 
 - `/var/lib/hao`（状态）和 `/etc/hao`（凭据）—— `/var/lib/<工具名>`、
   `/etc/<工具名>` 正是约定本身，同 `/var/lib/docker`、`/etc/docker`。
@@ -146,9 +146,6 @@ reference。**不要替用户猜域名、Git 身份、仓库地址这类东西�
   `/etc/systemd/journald.conf.d/hao.conf`。共享目录里放一个能看出出处的文件名
   本身就是惯例（`50-cloud-init.cfg` 之类），对接手的人是帮助。新增 drop-in 沿用
   这个风格，别再发明第三种。
-- `/usr/local/bin/hao-github-authorize` 是历史遗留。新写的可执行文件用通用命名
-  （像 `<站点ID>-update` 那样），但**不要给存量机器上的它改名**——状态记录、
-  `drift`、以及已经告诉过用户的命令名都指着那个路径。
 
 ### 不在本 skill 范围内的事
 

@@ -46,8 +46,6 @@ XRAY_ASSET_DIR="/usr/local/share/xray"
 XRAY_LOG_DIR="/var/log/xray"
 # shellcheck disable=SC2034
 XRAY_UNIT="/etc/systemd/system/xray.service"
-# shellcheck disable=SC2034
-XRAY_LEGACY_CONF="$XRAY_ETC/config.json"
 # 状态记录目录。hao-state.sh 认同一个环境变量，测试时一起覆盖就行。
 # shellcheck disable=SC2034
 STATE_SERVICES_DIR="${HAO_STATE_DIR:-/var/lib/hao}/services"

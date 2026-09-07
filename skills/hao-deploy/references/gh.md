@@ -18,7 +18,7 @@ GitHub 账号」。这台机器可能不只他一个人用，而 gh 凭据能读
 ## 1. 前置检查（只读）
 
 ```bash
-"$SKILL/scripts/hao-guard.sh" managed-file /usr/local/bin/hao-github-authorize
+"$SKILL/scripts/hao-guard.sh" managed-file /usr/local/bin/github-authorize
 command -v gh >/dev/null && gh --version | head -1
 cat /etc/apt/sources.list.d/github-cli.list 2>/dev/null
 ```
@@ -88,13 +88,13 @@ apt-get install -y -qq gh
 ## 4. 装授权助手
 
 把 `templates/gh-authorize.sh.tmpl` 逐字安装成
-`/usr/local/bin/hao-github-authorize`（权限 0755，无需替换任何占位符）。
+`/usr/local/bin/github-authorize`（权限 0755，无需替换任何占位符）。
 
 **授权本身不在部署流程里做**，因为它需要用户在浏览器里交互。部署完成后告诉用户
 以目标用户身份运行：
 
 ```bash
-hao-github-authorize
+github-authorize
 ```
 
 助手会做：web/设备码登录（附加 `admin:public_key` 权限）→ 注册 git 凭据助手 →
@@ -119,7 +119,7 @@ hao-github-authorize
 
 授权与安全：
 
-- 认证状态用 `gh auth status` 检查。未登录时提示用户运行 `hao-github-authorize`
+- 认证状态用 `gh auth status` 检查。未登录时提示用户运行 `github-authorize`
   （web/设备码登录 + SSH Git 协议），不要代替用户输入凭据。
 - 禁止在命令行、日志或提交内容中出现 token 值。
 - Git 推送走 SSH 协议；提交身份已由系统配置好，不要擅自修改 `user.name` / `user.email`。
@@ -131,7 +131,7 @@ EOF
 
 ```bash
 gh --version                                # 必须有输出
-[ -x /usr/local/bin/hao-github-authorize ]  # 助手可执行
+[ -x /usr/local/bin/github-authorize ]  # 助手可执行
 gh auth status || true                      # 未登录是预期的
 ```
 
@@ -144,7 +144,7 @@ gh auth status || true                      # 未登录是预期的
 "$SKILL/scripts/hao-state.sh" record gh installed \
     managed:/etc/apt/sources.list.d/github-cli.list \
     managed:/etc/apt/keyrings/githubcli-archive-keyring.gpg \
-    managed:/usr/local/bin/hao-github-authorize
+    managed:/usr/local/bin/github-authorize
 "$SKILL/scripts/hao-state.sh" intent gh \
     target_user="$TARGET_USER" machine_role="$ROLE" auth_mode="$AUTH_MODE"
 "$SKILL/scripts/hao-state.sh" handoff
@@ -152,16 +152,12 @@ gh auth status || true                      # 未登录是预期的
 
 SSH 私钥**不进清单**。`auth_mode` 是 `web` 或 `skip`，它决定新机器上要不要重做授权。
 
-`/usr/local/bin/hao-github-authorize` 这个名字带 `hao-` 前缀是历史遗留
-（新写的可执行文件应该用通用命名，见 `SKILL.md` 的路径约定）。**不要在存量机器上
-给它改名**：状态记录、`drift`、以及已经告诉过用户的命令名都指着这个路径。
-
 ## 汇报给用户
 
 ```
 目标用户 / 机器角色 / 授权方式
 gh 版本
-下一步：以 <目标用户> 身份运行 hao-github-authorize 完成登录
+下一步：以 <目标用户> 身份运行 github-authorize 完成登录
 ```
 
 私有仓库的无人值守部署不该用个人授权，建议只读 Deploy Key 或 GitHub App。
