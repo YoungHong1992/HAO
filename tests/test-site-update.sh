@@ -41,8 +41,9 @@ git -c init.defaultBranch=main init -q "$WORK/src"
 )
 git clone -q "$WORK/origin.git" "$WORK/clone"
 
-render() {                       # render <输出> <产物目录>
+render() {                       # render <输出> <产物目录> [额外的 sed 式替换…]
     local out="$1" output_dir="$2" content
+    shift 2
     content="$(cat "$TMPL")"
     content="${content//@@SITE_ID@@/testsite}"
     content="${content//@@BRANCH@@/main}"
@@ -56,6 +57,11 @@ render() {                       # render <输出> <产物目录>
     content="${content//\/opt\/testsite/$WORK/clone}"
     # 沙箱里没有 root，去掉 EUID 检查（被测的是发布逻辑，不是权限检查）
     content="${content//if \[ \"\$\{EUID:-\$(id -u)\}\" -ne 0 \]; then/if false; then}"
+    # 可选：注入一处人为失败，用来测「中途炸掉」
+    local sub
+    for sub in "$@"; do
+        content="${content//${sub%%|*}/${sub#*|}}"
+    done
     printf '%s\n' "$content" > "$out"
     chmod +x "$out"
 }
@@ -90,6 +96,18 @@ render "$WORK/u-ok.sh" "build"
 [ -z "$(ls -d "$WEB".new.* 2>/dev/null || true)" ] || fail "留下了临时的 .new 目录"
 [ -z "$(ls -d "$WEB".old.* 2>/dev/null || true)" ] || fail "留下了临时的 .old 目录"
 ok "发布成功且没留临时目录"
+
+echo "== 4. 发布中途炸掉 =="
+# 把 chown 换成一条必然失败的命令，模拟磁盘满/权限错之类的中途失败
+echo "v1-live" > "$WEB/index.html"
+render "$WORK/u-boom.sh" "build" 'chown -R "$TARGET_USER:$TARGET_GROUP" "$STAGE"|false'
+if "$WORK/u-boom.sh" >"$WORK/log4" 2>&1; then
+    fail "中途失败时脚本不该返回成功"
+fi
+[ "$(cat "$WEB/index.html")" = "v1-live" ] || fail "中途失败时线上内容被破坏了"
+[ -z "$(ls -d "$WEB".new.* 2>/dev/null || true)" ] || fail "中途失败后留下了 .new 临时目录"
+[ -z "$(ls -d "$WEB".old.* 2>/dev/null || true)" ] || fail "中途失败后留下了 .old 临时目录"
+ok "失败、线上内容完好、没留临时目录"
 
 echo ""
 echo "site 更新脚本测试通过"

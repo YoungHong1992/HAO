@@ -62,6 +62,28 @@ for f in xray.service 00-base.json sysctl-bbr.conf certbot-deploy-hook-xray.sh.t
 done
 ok "四个逐字模板的注释头都在"
 
+# 每个占位符都必须在该模板的注释里被说明（和 skill 侧同一条规则：
+# 只看注释行，否则短模板里"自己被用到"就算通过，检查等于没有）
+undocumented=0
+for tmpl in "$SCIENCE_DIR"/templates/*; do
+    case "$(basename "$tmpl")" in
+        # 这两个渲染出来是给**用户**看的纯文本（/etc/hao/*.client.txt），
+        # 加注释块会把"占位符说明"渲进用户看到的内容里。它们的取值在
+        # lib/*.sh 的 render_plain 调用处逐个列着，那里才是说明的位置。
+        *-client.txt.tmpl) continue ;;
+    esac
+    comments="$(grep -E '^[[:space:]]*(#|//)' "$tmpl" || true)"
+    while IFS= read -r tok; do
+        [ -n "$tok" ] || continue
+        case "$comments" in
+            *"$tok"*) ;;
+            *) echo "  ✗ $(basename "$tmpl") 用了 $tok 但注释里没说明它" >&2; undocumented=1 ;;
+        esac
+    done < <(grep -ohE '@@[A-Z][A-Z0-9_]*@@' "$tmpl" | sort -u)
+done
+[ "$undocumented" -eq 0 ] || exit 1
+ok "每个模板的占位符都在注释里有说明（客户端信息模板除外，见注释）"
+
 assert_json "$SCIENCE_DIR/templates/00-base.json" "00-base.json"
 # 私有地址必须被挡掉：带认证的公网代理如果能穿进 127.0.0.1，
 # 等于把本机所有「只监听回环所以没设密码」的服务暴露给拿到口令的人。

@@ -72,6 +72,10 @@ esac
 log "发布静态文件到 $WEB_DIR ..."
 STAGE="${WEB_DIR}.new.$$"
 OLD="${WEB_DIR}.old.$$"
+# 中途失败（构建产物坏了、磁盘满了）要把临时目录带走，否则 /var/www 下会攒出
+# 一堆 <docroot>.new.<pid>，下一个来看的人根本分不清哪个是线上的。
+cleanup_stage() { rm -rf "$STAGE"; }
+trap cleanup_stage EXIT
 rm -rf "$STAGE"
 install -d -m 0755 "$STAGE"
 cp -a "$SRC/." "$STAGE/"
@@ -84,7 +88,13 @@ chmod 755 "$STAGE"
 if [ -d "$WEB_DIR" ]; then
     mv "$WEB_DIR" "$OLD"
 fi
-mv "$STAGE" "$WEB_DIR"
+if ! mv "$STAGE" "$WEB_DIR"; then
+    # 换名失败（极少见，同一文件系统内的 rename）。把旧目录放回去，宁可不更新
+    # 也不能让站点空着。
+    [ -d "$OLD" ] && mv "$OLD" "$WEB_DIR"
+    echo "[ERROR] 发布失败，已还原原有内容" >&2
+    exit 1
+fi
 rm -rf "$OLD"
 
 log "重载 Nginx ..."

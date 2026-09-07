@@ -205,17 +205,20 @@ esac
 
 ```bash
 STAGE="$DOCROOT.new.$$"
+OLD="$DOCROOT.old.$$"
+trap 'rm -rf "$STAGE"' EXIT      # 中途失败别在 /var/www 下留一堆 .new.<pid>
 install -d -m 0755 "$STAGE"
 cp -a "$SRC/." "$STAGE/"
 [ "$OUTPUT" = "." ] && rm -rf "$STAGE/.git"   # 别把 .git 发到公网
 chown -R "$TARGET_USER:$TARGET_GROUP" "$STAGE"
 chmod 755 "$STAGE"
 
-if [ -d "$DOCROOT" ]; then
-    mv "$DOCROOT" "$DOCROOT.old.$$"
+[ -d "$DOCROOT" ] && mv "$DOCROOT" "$OLD"
+if ! mv "$STAGE" "$DOCROOT"; then
+    [ -d "$OLD" ] && mv "$OLD" "$DOCROOT"     # 还原，宁可不更新也不能让站点空着
+    echo "发布失败，已还原原有内容"; exit 1
 fi
-mv "$STAGE" "$DOCROOT"
-rm -rf "$DOCROOT.old.$$"
+rm -rf "$OLD"
 ```
 
 `templates/site-update-static.sh.tmpl` 里是同一套顺序（那个脚本以后每次更新都

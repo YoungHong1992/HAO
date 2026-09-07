@@ -145,25 +145,27 @@ while IFS= read -r tok; do
 done < <(grep -ohE '@@[A-Za-z0-9_]+@@' "$SKILL_DIR"/templates/* 2>/dev/null | sort -u)
 [ "$badtoken" -eq 0 ] && note "模板占位符格式合法" || fail=1
 
-# ---------- 每个占位符都必须在该模板自己的注释头里被提到 ----------
+# ---------- 每个占位符都必须在该模板的注释里被说明 ----------
 # 文档只说明一部分 token、剩下的靠猜，是个真实的故障源：漏掉的 @@SITE_ID@@ 会进
 # `# HAO-SITE:` 归属头，之后 vhost-owner 把这个站点当成「别的站点」，
-# 该站点再也无法更新自己。占位符的权威说明就放在模板自己头部，这条测试守住它。
+# 该站点再也无法更新自己。占位符的权威说明就放在模板自己的注释里，这条测试守住它。
+# 只看注释行（不是"前 40 行"）—— 短模板的正文会落进那个窗口，
+# 于是占位符靠"自己被用到"就算通过，那样这条检查等于没有。
 undocumented=0
 for tmpl in "$SKILL_DIR"/templates/*; do
-    header="$(head -n 40 "$tmpl")"
+    comments="$(grep -E '^[[:space:]]*(#|//)' "$tmpl" || true)"
     while IFS= read -r tok; do
         [ -n "$tok" ] || continue
-        case "$header" in
+        case "$comments" in
             *"$tok"*) ;;
             *)
-                echo "FAIL $(basename "$tmpl") 用了 $tok 但头部注释没说明它" >&2
+                echo "FAIL $(basename "$tmpl") 用了 $tok 但注释里没说明它" >&2
                 undocumented=1
                 ;;
         esac
     done < <(grep -ohE '@@[A-Z][A-Z0-9_]*@@' "$tmpl" | sort -u)
 done
-[ "$undocumented" -eq 0 ] && note "每个模板的占位符都在自己头部有说明" || fail=1
+[ "$undocumented" -eq 0 ] && note "每个模板的占位符都在注释里有说明" || fail=1
 
 # ---------- 不得引用 certbot nginx 插件才会提供的文件 ----------
 # 这两个文件由 python3-certbot-nginx 提供（`dpkg -S options-ssl-nginx.conf`），
