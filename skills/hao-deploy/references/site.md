@@ -44,6 +44,30 @@ snippet 必须用同一个值。
 | 入口文件 | node 用，默认 `server.js` | 服务起不来 |
 | 运行用户 | 默认 `$SUDO_USER`，否则 root | 决定文件归属 |
 
+### 变量命名：**不要**用 `$USER`
+
+这一节的命令一律用 `TARGET_USER` / `TARGET_GROUP` / `TARGET_HOME`，和其他 reference
+以及模板里的 `@@TARGET_USER@@` 保持一致。原因很具体：
+
+```bash
+$ sudo bash -c 'echo $USER'
+USER=root
+```
+
+`USER`、`HOME`、`GROUPS` 在任何 root/sudo shell 里**本来就有值**。如果用 `$USER`
+装运行用户，忘了赋值时 `runuser -u "$USER"` 就变成 `runuser -u root`，
+"不要用 root 拉代码"这条约束被完整违反，而且**退出码是 0**，什么都不报。
+`intent run_user="$USER"` 还会把 `run_user=root` 记进意图文件，换机器重放也是错的。
+
+一开始就显式派生一次，后面全用这三个变量：
+
+```bash
+TARGET_USER="${SUDO_USER:-root}"          # 用户指定了别的就用他给的
+TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+TARGET_GROUP="$(id -gn "$TARGET_USER")"
+[ -n "$TARGET_HOME" ] || { echo "取不到 $TARGET_USER 的 home，停下来问用户"; exit 1; }
+```
+
 **同一台机器只能有一个无域名的默认站点**（`server_name _`）。已经有一个了，
 就必须给新站点一个域名。
 
@@ -57,6 +81,23 @@ snippet 必须用同一个值。
 "$SKILL/scripts/hao-guard.sh" repo-identity "/opt/$ID" "$REPO"
 "$SKILL/scripts/hao-guard.sh" cert-issuer "/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
 "$SKILL/scripts/hao-guard.sh" unit-free "$ID"            # node 类型必查
+```
+
+**`vhost-owner` 只看一个目录，默认 `/etc/nginx/conf.d`（且不递归）。** 它有第二个
+可选参数就是为此：机器上原先装过发行版 nginx（第 1 节明确支持这种机器）时，
+冲突的 `server_name` 可能在 `sites-enabled/` 里，默认那次调用**看不见**，
+于是返回 `free`，我们写出第二个同名 server_name —— nginx 只打一条 warning，
+然后其中一个静默生效。所以那个目录存在时要再查一遍：
+
+```bash
+[ -d /etc/nginx/sites-enabled ] && \
+    "$SKILL/scripts/hao-guard.sh" vhost-owner "$DOMAIN" /etc/nginx/sites-enabled
+```
+
+无域名的默认站点查的是 `_`（`vhost-owner ""` 会直接报错退出）：
+
+```bash
+"$SKILL/scripts/hao-guard.sh" vhost-owner _      # 已有默认站点就必须给新站点一个域名
 ```
 
 **`vhost-owner` 的判断规则（最重要的一道闸）**：
@@ -88,6 +129,15 @@ snippet 必须用同一个值。
 `/opt` 下可能已经有用户自己放的同名目录（比如手工部署过的应用），`repo-identity`
 返回 `not-git` 就是这种情况，一定要停。
 
+`cert-issuer` 有**四**种输出，别只准备两种：
+
+| 输出 | 含义 | 该怎么做 |
+|---|---|---|
+| `missing` | 还没有证书 | 正常签发 |
+| `letsencrypt` | 已有真实证书 | 跳过签发（有速率限制），直接用 |
+| `selfsigned` | 上次是自签名兜底 | 可以重试真实签发 |
+| `other <issuer>` / `other unreadable` | 那张证书**不是本流程签的**（别的 CA、别的工具、或读不出来） | 当成 `foreign` 处理：**停下**，把 issuer 报给用户。不要覆盖，也不要重签（certbot 会另起一个 `-0001` 的 lineage，之后两张证书谁在续期都说不清） |
+
 域名模式还要确认 DNS 已经指过来，否则证书申请一定失败：
 
 ```bash
@@ -111,14 +161,14 @@ curl -s --connect-timeout 5 https://api.ipify.org   # 本机公网 IP
 ```bash
 DIR="/opt/$ID"
 # 首次克隆
-install -d -m 0755 -o "$USER" -g "$GROUP" "$DIR"
-runuser -u "$USER" -- env HOME="$HOME_DIR" \
+install -d -m 0755 -o "$TARGET_USER" -g "$TARGET_GROUP" "$DIR"
+runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" \
     git clone --branch "$BRANCH" "$REPO" "$DIR"
 
 # 已存在（repo-identity == ok）则更新
-runuser -u "$USER" -- env HOME="$HOME_DIR" git -C "$DIR" fetch --prune origin
-runuser -u "$USER" -- env HOME="$HOME_DIR" git -C "$DIR" checkout -f -B "$BRANCH" "origin/$BRANCH"
-runuser -u "$USER" -- env HOME="$HOME_DIR" git -C "$DIR" reset --hard "origin/$BRANCH"
+runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" git -C "$DIR" fetch --prune origin
+runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" git -C "$DIR" checkout -f -B "$BRANCH" "origin/$BRANCH"
+runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" git -C "$DIR" reset --hard "origin/$BRANCH"
 ```
 
 克隆失败要把半成品目录删掉再报错，不要留下空目录（下次重跑会被误判为已存在）。
@@ -132,26 +182,54 @@ runuser -u "$USER" -- env HOME="$HOME_DIR" git -C "$DIR" reset --hard "origin/$B
 
 ```bash
 # 构建（以目标用户执行，CI=true 让多数前端工具进入非交互模式）
-runuser -u "$USER" -- env HOME="$HOME_DIR" CI=true \
+runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" CI=true \
     bash -c "cd /opt/$ID && $BUILD_CMD"
-
-# 发布
-install -d -m 0755 "$DOCROOT"
-find "$DOCROOT" -mindepth 1 -delete            # 清旧产物，避免删掉的文件残留
-cp -a "/opt/$ID/$OUTPUT/." "$DOCROOT/"
-[ "$OUTPUT" = "." ] && rm -rf "$DOCROOT/.git"  # 别把 .git 发到公网
-chown -R "$USER:$GROUP" "$DOCROOT"
-chmod 755 "$DOCROOT"
 ```
 
-产物目录不存在就停下来报错，并把 `构建命令 / 产物目录` 两个值回显给用户核对
-——这是最常见的配置错误。产物目录必须是克隆目录内的相对路径，含 `..` 或绝对
-路径一律拒绝。
+**先校验产物，再动 docroot。顺序不能反。**「产物目录填错」是这条链路上最常见的
+配置错误，而清空 docroot 是不可逆的：先清后拷的话，填错时线上内容已经没了，
+`cp` 才失败，站点直接变 404。
 
-`DOCROOT` 已存在且里面有非本站点内容时要小心：`find -delete` 会清空它。
-先确认那个目录是空的、或者确实是本站点上次发布的产物（`vhost-owner` 返回
-`hao-site <本站ID>` 即可佐证）。**`/var/www/<域名>` 是通用路径，用户可能自己
-手工放过东西在里面。**
+```bash
+SRC="/opt/$ID/$OUTPUT"
+case "$OUTPUT" in
+    /*|*..*) echo "产物目录必须是仓库内的相对路径且不含 ..：$OUTPUT"; exit 1 ;;
+esac
+[ -d "$SRC" ] || { echo "产物目录不存在：$SRC"; exit 1; }
+[ -n "$(ls -A "$SRC")" ] || { echo "产物目录是空的：$SRC，拒绝用空内容覆盖站点"; exit 1; }
+```
+
+任一条不过就**停下来**，把 `构建命令 / 产物目录` 两个值回显给用户核对，不要继续。
+
+发布用「旁边建好再整体换过去」，中途失败时线上目录一直是完整的旧版本：
+
+```bash
+STAGE="$DOCROOT.new.$$"
+install -d -m 0755 "$STAGE"
+cp -a "$SRC/." "$STAGE/"
+[ "$OUTPUT" = "." ] && rm -rf "$STAGE/.git"   # 别把 .git 发到公网
+chown -R "$TARGET_USER:$TARGET_GROUP" "$STAGE"
+chmod 755 "$STAGE"
+
+if [ -d "$DOCROOT" ]; then
+    mv "$DOCROOT" "$DOCROOT.old.$$"
+fi
+mv "$STAGE" "$DOCROOT"
+rm -rf "$DOCROOT.old.$$"
+```
+
+`templates/site-update-static.sh.tmpl` 里是同一套顺序（那个脚本以后每次更新都
+**无人值守**地跑，更需要这层保护）。
+
+**`DOCROOT` 里可能有用户自己放的东西**：`/var/www/<域名>` 是通用路径，不是 HAO 专有。
+上面那段的 `mv "$DOCROOT" "$DOCROOT.old.$$"` 加 `rm -rf` 会把原内容删掉，所以第一次
+部署到一个**非空**的 docroot 之前必须先确认它属于本站点。判断依据只有两个：
+
+- 这个站点在 `/var/lib/hao/services/site-<ID>.resources` 里已经登记过这个 docroot；
+- 或者用户明确说"那个目录里的东西可以删"。
+
+**`vhost-owner` 不能当这个证据用** —— 它回答的是"谁占用了这个 server_name"，
+和"谁往 `/var/www/<域名>` 里放了文件"完全是两件事。
 
 ## 3b. node 类型：systemd 服务
 
@@ -164,6 +242,8 @@ PORT="$("$SKILL/scripts/hao-guard.sh" unit-port "/etc/systemd/system/$ID.service
 [ -n "$PORT" ] || for p in $(seq 8100 8200); do
     [ "$("$SKILL/scripts/hao-guard.sh" port-free "$p")" = free ] && { PORT="$p"; break; }
 done
+# 一个都没空出来就停下来，不要带着空 PORT 继续往下写单元和 nginx 配置
+[ -n "$PORT" ] || { echo "8100-8200 全被占用，让用户指定一个端口"; exit 1; }
 ```
 
 同一批部署的多个站点之间也不能撞端口，自己记账。
@@ -194,17 +274,29 @@ systemctl enable "$ID.service"
 systemctl restart "$ID.service"
 ```
 
-启动后**必须确认端口真的在监听**（服务 active 不等于应用起来了）：
+启动后**必须确认端口真的在监听**（服务 active 不等于应用起来了）。
+循环要有一个明确的成功标记，否则失败和成功走的是同一条路径：
 
 ```bash
+ready=0
 for _ in $(seq 1 15); do
-    timeout 2 bash -c ">/dev/tcp/127.0.0.1/$PORT" 2>/dev/null && { echo ready; break; }
+    if timeout 2 bash -c ">/dev/tcp/127.0.0.1/$PORT" 2>/dev/null; then
+        ready=1; break
+    fi
     sleep 2
 done
+[ "$ready" = 1 ] || {
+    journalctl -u "$ID.service" -n 50 --no-pager
+    echo "端口 $PORT 在约 60 秒内没有就绪，停下来把上面的日志给用户"
+    exit 1
+}
 ```
 
-30 秒内没起来就停下来，把 `journalctl -u $ID.service -n 50` 的输出
-给用户，不要继续往下写 Nginx 配置。
+每轮最多 2 秒探测 + 2 秒等待，15 轮的预算是**约 60 秒**（不是 30）。
+`templates/site-update-node.sh.tmpl` 里是同一套写法。
+
+没起来就停下来，把 `journalctl -u $ID.service -n 50` 的输出给用户，
+不要继续往下写 Nginx 配置。
 
 ### 再回读一次实际绑定地址
 
@@ -231,6 +323,36 @@ TLS、访问控制、限流全都被跳过，此时唯一挡着的是云安全�
 
 `CONF_NAME` = 有域名时 `$DOMAIN`，无域名时 `$ID`。
 
+### 占位符：每个模板的 token 都要替换，写完必须自己查一遍
+
+模板里的 `@@TOKEN@@` **一个都不能留**。权威清单在每个模板自己的头部注释里
+（那里也解释了每个 token 的含义），这里给个总表便于核对：
+
+| 模板 | 占位符 |
+|---|---|
+| `site-vhost-http.conf` | `SITE_ID` `CONF_NAME` `SERVER_NAME` |
+| `site-vhost-tls.conf` | `SITE_ID` `CONF_NAME` `SERVER_NAME` `DOMAIN` `PORT80_BODY` `QUIC_LISTEN` `ALT_SVC` |
+| `site-body-static.conf` | `SITE_ID` `CONF_NAME` `DOCROOT` |
+| `site-body-node.conf` | `SITE_ID` `CONF_NAME` `PORT` |
+| `site-node.service` | `SITE_ID` `TARGET_USER` `TARGET_HOME` `NODE_BIN` `START_FILE` `PORT` `EXTRA_ENV` |
+| `site-update-static.sh.tmpl` | `SITE_ID` `BRANCH` `TARGET_USER` `TARGET_GROUP` `TARGET_HOME` `BUILD_CMD` `OUTPUT_DIR` `DOCROOT` |
+| `site-update-node.sh.tmpl` | `SITE_ID` `BRANCH` `TARGET_USER` `TARGET_HOME` `PORT` |
+
+本文里的变量名和 token 名不完全同名，对应关系：
+`$ID`→`@@SITE_ID@@`、`$ENTRY`→`@@START_FILE@@`、`$OUTPUT`→`@@OUTPUT_DIR@@`、
+`$TARGET_USER`/`$TARGET_GROUP`/`$TARGET_HOME`→同名 token。
+
+**每写完一个文件，`nginx -t` / `daemon-reload` 之前先查残留：**
+
+```bash
+grep -n '@@[A-Z]' "$FILE" && { echo "还有占位符没替换，停下来"; exit 1; }
+```
+
+漏掉的后果不只是配置不对。`@@SITE_ID@@` 出现在归属头 `# HAO-SITE:` 里，
+残留会让 `hao-guard.sh vhost-owner` 报 `hao-site @@SITE_ID@@` ——
+按第 1 节的规则那意味着"另一个 HAO 站点占用了这个域名"，于是**本站点以后
+再也无法更新自己**，而且现象和原因毫不相关。
+
 **第一步**：写内容块和 HTTP 版 vhost。
 
 - `templates/site-body-static.conf` 或 `site-body-node.conf`
@@ -249,11 +371,30 @@ if nginx -t >/dev/null 2>&1; then
     systemctl reload nginx || systemctl start nginx
 else
     nginx -t 2>&1            # 原始输出给用户看
-    [ -n "$BAK" ] && cp -a "$BAK" "$CONF" || rm -f "$CONF"
+    # 有备份就恢复，没备份才删。**不要**写成 `[ -n "$BAK" ] && cp … || rm -f …`：
+    # 那个形式在 cp 本身失败时也会执行 rm，把还在服务的配置删掉。
+    if [ -n "$BAK" ]; then
+        cp -a "$BAK" "$CONF"
+    else
+        rm -f "$CONF"
+    fi
     nginx -t >/dev/null 2>&1 && systemctl reload nginx
-    # 停下来报错，不要继续
+    echo "nginx -t 未通过，已回滚。把上面的原始输出给用户，不要继续。"
+    exit 1
 fi
 ```
+
+**站点能否真的取到内容要自己验一次**，别停在 `nginx -t` 通过就报成功：
+
+```bash
+# 有域名（TLS 还没配好时先验 80）
+curl -sS -o /dev/null -w '%{http_code}\n' -H "Host: $DOMAIN" http://127.0.0.1/
+# 无域名的默认站点
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1/
+```
+
+不是 2xx/3xx 就停下来：static 看 `ls "$DOCROOT"`（多半是产物目录填错），
+node 看 `journalctl -u "$ID.service" -n 50`（多半是应用没起来）。
 
 无域名或 `CERT=no` 的站点到这里就结束了，跳到第 5 步。
 
@@ -296,16 +437,13 @@ certbot 2.x 默认就是 ECDSA 密钥，不用额外指定。
 systemctl list-timers certbot.timer --no-pager
 ```
 
-reload 钩子装到约定位置（**逐字安装，无占位符**）：
+续期后重载 Nginx 的 deploy 钩子**由 `nginx` 模块安装**（它对所有证书生效，
+不是某个站点专属的），见 `references/nginx.md` 第 4 节。这里只确认它在：
 
 ```bash
-install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
-install -m 0755 "$SKILL/templates/certbot-deploy-hook.sh.tmpl" \
-    /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+[ -x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh ] \
+    || echo "钩子不在，按 references/nginx.md 第 4 节装上，否则续期后 Nginx 仍用旧证书"
 ```
-
-放这里而不是用 `--deploy-hook`：这是任何运维都能找到的位置，而且对**所有**证书
-生效，不用在每个域名的签发命令里重复一遍。
 
 申请失败时降级为自签名（站点仍可用，只是浏览器告警），并**如实告诉用户这是
 自签名证书**，不要说成"证书已配置好"。自签名证书放 Debian 标准位置，
@@ -323,12 +461,16 @@ chmod 600 "/etc/ssl/private/$DOMAIN.key"
 chmod 644 "/etc/ssl/certs/$DOMAIN.pem"
 ```
 
-走自签名分支时，TLS vhost 里要把证书路径换成上面这两个，并且**删掉**
-`options-ssl-nginx.conf` 和 `ssl-dhparams.pem` 两行 include——那两个文件只在
-certbot 至少成功签发过一次之后才存在，引用不存在的文件会让 `nginx -t` 直接失败。
+走自签名分支时，TLS vhost 里**只**把那两行证书路径换成上面这两个，别的不用动：
+协议、套件、会话、HSTS 都在 `snippets/ssl-hardening.conf` 里，两种证书都适用。
 
 **第三步**：改写成 TLS 版 vhost（`templates/site-vhost-tls.conf`），同样是
-备份 → 写入 → `nginx -t` → reload/回滚。
+备份 → 写入 → 查 `@@` 残留 → `nginx -t` → reload/回滚。写完再验一次真实内容：
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/"
+# 自签名证书时加 -k（那本身就说明客户端会看到告警，要如实告诉用户）
+```
 
 ### ⚠️ 522 教训：什么时候才允许 80→443 跳转
 
@@ -351,7 +493,9 @@ certbot 至少成功签发过一次之后才存在，引用不存在的文件会
 ## 5. 生成更新脚本
 
 用 `templates/site-update-static.sh.tmpl` 或 `site-update-node.sh.tmpl`
-生成 `/usr/local/bin/$ID-update`，权限 0755。
+生成 `/usr/local/bin/$ID-update`，权限 0755。占位符清单见第 4 节的总表，
+写完照样 `grep -n '@@[A-Z]'` 查一遍——这个脚本以后是无人值守跑的，
+一个残留占位符会在几周后的某次更新里才炸。
 
 脚本内嵌解析后的字面量，不依赖本 skill，用户之后自己 `sudo $ID-update`
 就能更新站点。值里含单引号要转义成 `'\''`。
@@ -370,11 +514,17 @@ certbot 至少成功签发过一次之后才存在，引用不存在的文件会
 "$SKILL/scripts/hao-state.sh" handoff
 ```
 
-**service ID 必须是 `site-$ID` 而不是 `site`。** `record` 对一个 service ID 只保留
-一条记录，是整体替换而不是追加。一台机器上部署第二个站点时，如果两次都记成
-`site`，第一个站点的资源会静默从状态里消失——它的 nginx 配置、更新脚本从此
-不再被 `drift` 检查，`HANDOFF.md` 里也只剩一行。这类丢失通常要等到有人手工改坏
-了那个站点、而 `drift` 一声不响时才被发现。
+`record` 会**静默跳过不存在的路径**（只在输出里打一行"跳过不存在的路径: …"）。
+那行不是提示信息，是**证据**：它说明你以为写了的东西其实没写成，回去查那一步。
+
+`result` 用哪个词：第一次装完 `installed`；已有站点重新部署 `updated`；
+只做了检查没改东西 `verified`；中途失败 `failed`；因为归属检查或用户拒绝而
+没做 `skipped`。别一律写 `installed` —— 下一个 agent 靠这个词判断这台机器
+上次到底发生了什么。
+
+**service ID 必须是 `site-$ID` 而不是 `site`。** `record` 是整体替换，都记成 `site`
+会让先部署的站点静默从状态里消失，理由和完整说明见 `references/handoff.md`
+「一个 service ID 只有一条记录」。
 
 克隆目录记 `observed` 而不是 `managed`：里面的内容由用户的仓库决定，每次
 更新都会变，记 managed 会让 `drift` 天天误报。同理，`DOCROOT` 里是构建产物、
@@ -392,12 +542,14 @@ certbot 至少成功签发过一次之后才存在，引用不存在的文件会
     build_cmd="${BUILD_CMD:-}" \
     output_dir="${OUTPUT:-}" \
     entry="${ENTRY:-}" \
-    run_user="$USER" \
+    run_user="$TARGET_USER" \
     cert="$CERT_STATE"
 ```
 
 `repo` 里内嵌的凭据会被自动脱敏,不用自己处理。**不要**往里塞任何密钥——
-key 名带 `password`/`token`/`secret` 之类的会被直接拒绝。
+key 名**含有** `password`/`passwd`/`token`/`secret`/`apikey`/`api_key`/`credential`/`private_key`
+任一子串的会被直接拒绝（所以 `token_ttl` 这种无害的名字也会被拒，换个词）。
+key 还必须**以小写字母开头**，只含小写字母、数字、下划线。
 node 类型不填 `build_cmd`/`output_dir`，static 类型不填 `entry`，留空即可。
 
 ## 7. 汇报给用户
@@ -419,8 +571,15 @@ node 类型不填 `build_cmd`/`output_dir`，static 类型不填 `entry`，留�
 - **502 Bad Gateway**：node 服务没起来，看 `journalctl -u $ID.service`。
 - **配好证书后站点全白 / 522**：跳转启用了但 443 没放行。改成不跳转先恢复可用，
   再让用户去开安全组。
-- **`nginx -t` 报找不到 `options-ssl-nginx.conf`**：certbot 从没成功签发过，
-  那个文件还不存在。走的是自签名分支就该删掉那两行 include。
+- **`nginx -t` 报找不到 `/etc/letsencrypt/options-ssl-nginx.conf`**：那个文件由
+  `python3-certbot-nginx` 提供，而本 skill 不装那个插件，所以**它永远不会出现**。
+  说明 vhost 里还有那行 include（旧版本模板的遗留）——删掉它，TLS 参数在
+  `snippets/ssl-hardening.conf` 里。`ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem`
+  同理。**这跟证书签没签成功无关**，别去查 certbot。
+- **`nginx -t` 报某个 `@@TOKEN@@` 附近语法错误**：占位符没替换完，
+  `grep -n '@@[A-Z]' <文件>` 找出来。
+- **本站点更新时被自己拦住（`vhost-owner` 报 `hao-site @@SITE_ID@@`）**：
+  上次写入时 `@@SITE_ID@@` 没被替换，归属头成了字面量。改掉那一行即可。
 - **证书申请失败**：先查 DNS 是否指向本机、80 是否可从公网访问、`-w` 的 webroot
   和 `snippets/acme-challenge.conf` 里的 `root` 是否一致、域名是否被另一个
   server 块抢走（`hao-guard.sh vhost-owner`）。

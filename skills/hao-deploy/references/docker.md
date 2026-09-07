@@ -27,6 +27,9 @@ apt-get install -y -qq ca-certificates curl gnupg
 
 install -m 0755 -d /etc/apt/keyrings
 . /etc/os-release      # $ID 是 debian 或 ubuntu
+# 少数 Debian 镜像的 os-release 缺 VERSION_CODENAME，缺了会写出一行残缺的 deb 行，
+# 而 apt-get update 报的错和真实原因看起来毫不相关。先兜底：
+[ -n "${VERSION_CODENAME:-}" ] || VERSION_CODENAME="$(lsb_release -cs 2>/dev/null || echo bookworm)"
 curl -fsSL --connect-timeout 30 "https://download.docker.com/linux/$ID/gpg" \
     | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
 chmod a+r /etc/apt/keyrings/docker.gpg
@@ -104,26 +107,31 @@ PY
 目标值的权威来源是 `templates/docker-daemon-logrotate.json`。Docker 还没装的
 机器上直接把那份模板写进去也可以，配置会在 Docker 安装后生效。
 
-**重启 Docker 之前看有没有运行中的容器**：
+**重启 Docker 之前看有没有运行中的容器**，然后按两条分支之一走：
 
 ```bash
 docker ps -q 2>/dev/null
 ```
 
-有容器在跑就**先问用户**——重启 Docker 会中断所有容器。用户不同意就说明
-「配置已写入，下次重启 Docker 后生效」。**这不是失败**，照实说就行。
+- **没有容器在跑** → `systemctl restart docker`，然后用下面的 `docker info` 验证；
+- **有容器在跑** → **先问用户**，重启会中断所有容器。用户不同意就跳过重启，
+  并说明「配置已写入，下次重启 Docker 后生效」——**这不是失败**，照实说就行。
+  这种情况下 `docker info` 的输出仍是旧值，不要拿它当"没配好"的证据。
 
 验证：
 
 ```bash
 cat /etc/docker/daemon.json                        # 用户原有的键还在
-docker info --format '{{.LoggingDriver}}'          # 重启过才会变
+docker info --format '{{.LoggingDriver}}'          # 只有重启过才会变
 ```
 
 ## 5. 把用户加进 docker 组（可选，要讲清风险）
 
 ```bash
-usermod -aG docker "$USER"
+# 不要用 $USER —— 那个变量在 root/sudo shell 里恒为 root，会把 root 加进组，
+# 而用户什么也没得到。显式派生一次目标用户：
+TARGET_USER="${SUDO_USER:-root}"
+usermod -aG docker "$TARGET_USER"
 ```
 
 必须告诉用户：**docker 组等价于 root**（能挂载宿主任意目录进容器）。
@@ -136,6 +144,8 @@ usermod -aG docker "$USER"
     managed:/etc/apt/sources.list.d/docker.list \
     managed:/etc/apt/keyrings/docker.gpg \
     shared:/etc/docker/daemon.json
+"$SKILL/scripts/hao-state.sh" intent docker \
+    source=download.docker.com log_max_size=50m log_max_file=3
 "$SKILL/scripts/hao-state.sh" handoff
 ```
 

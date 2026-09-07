@@ -8,6 +8,12 @@
 # 脚本内嵌所有解析后的字面量，不依赖 HAO skill 或本仓库，可独立运行。
 #
 # 生成时的注意事项：值里若含单引号，必须写成 '\'' 转义形式。
+#
+# 占位符（**五个全都要替换**；写入后必须 `grep -n '@@[A-Z]' <目标文件>` 确认为空）:
+#   @@SITE_ID@@ @@BRANCH@@ @@TARGET_USER@@ @@TARGET_HOME@@ @@PORT@@
+# 都在下面的变量赋值里。@@PORT@@ 要和既有单元一致（用 hao-guard.sh unit-port
+# 读回来，别换端口）；@@TARGET_USER@@ 不是 $USER —— 那个变量在 root shell 里
+# 恒为 root（见 references/site.md 第 0 节）。
 set -euo pipefail
 
 SITE_ID='@@SITE_ID@@'

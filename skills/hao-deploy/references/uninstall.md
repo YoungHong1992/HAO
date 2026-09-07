@@ -75,6 +75,10 @@ certbot delete --cert-name <域名>     # 确认后再删
 - **nginx**：`systemctl disable --now nginx`，再删掉不要的
   `/etc/nginx/conf.d/*.conf`（HAO 写的文件开头有 `# Managed by HAO`，
   用 `hao-guard.sh managed-file` 判断）。删主配置前想清楚：其他站点也靠它。
+  还有两个容易漏的：共享片段 `/etc/nginx/snippets/{ssl-hardening,acme-challenge}.conf`
+  和证书续期钩子 `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh`
+  （钩子是 nginx 模块装的；删了它以后证书续期后不会重载 Nginx，
+  站点会在续期后继续用旧证书直到下次重启）。
 - **docker**：`systemctl disable --now docker` 并按需卸包。
   **注意**：这会影响这台机器上所有容器，不只是 HAO 部署的。日志轮转那部分是
   `daemon.json` 里的 `log-driver` / `log-opts` 两个键，`shared` 资源，
@@ -82,11 +86,19 @@ certbot delete --cert-name <域名>     # 确认后再删
 - **fail2ban**：删 `/etc/fail2ban/jail.d/hao-sshd.local`，然后
   `systemctl restart fail2ban`（还想留着 fail2ban）或 `systemctl disable --now fail2ban`
   并卸包。删掉之后 SSH 就没有防爆破了，说清这一点。
-- **swap**：先 `swapoff /swapfile`（或 `/swapfile.hao`）再删文件，然后删掉
-  `/etc/fstab` 里那一行——**顺序不能颠倒**，先删文件后 swapoff 会让机器起不来。
-  `/etc/fstab` 是 `shared`，只删我们加的那一行。再删
-  `/etc/sysctl.d/99-hao-swap.conf`。内存吃紧的机器上关掉 swap 会让 OOM 回来，
-  先问清楚。
+- **swap**：顺序是 `swapoff` → **先删 `/etc/fstab` 里那一行** → 最后删文件。
+  ```bash
+  swapoff /swapfile                      # 或 /swapfile.hao，按记录里的实际路径
+  # 编辑 /etc/fstab，删掉那一行（fstab 是 shared，只删我们加的那行）
+  rm -f /swapfile
+  rm -f /etc/sysctl.d/99-hao-swap.conf
+  ```
+  **不能反过来先删文件**：`/etc/fstab` 里留着一条指向已经不存在的文件的 swap 行，
+  systemd 生成的 swap 单元会启动失败，机器可能开机进 emergency shell。
+  （删一个正在使用的 swap 文件本身并不会让机器起不来——inode 会被 swapon 持有到
+  swapoff 为止。以前这里的因果写反了。）新版本写 fstab 时会带 `nofail`，
+  但老机器上那行可能没有。
+  内存吃紧的机器上关掉 swap 会让 OOM 回来，先问清楚。
 - **journald**：删 `/etc/systemd/journald.conf.d/hao.conf`，
   `systemctl restart systemd-journald`。上限没了之后日志会重新按磁盘 10% 增长。
 - **git**：卸包或保留都行。`~/.gitconfig` 是 `shared`——只删我们写的
@@ -99,7 +111,9 @@ certbot delete --cert-name <域名>     # 确认后再删
 - **node / uv / claude-code**：卸包或删二进制。
 - 写进 AI 助手指令文件的约定块用标记包裹（`HAO-UV` / `HAO-GH` / `HAO-HANDOFF`；
   旧机器上可能还叫 `HAO-GIT-GITHUB`），手工删掉 BEGIN 到 END 之间连同标记本身，
-  块外内容不要动。
+  块外内容不要动。BEGIN 行的原文形如
+  `<!-- HAO-UV BEGIN (managed by HAO, do not edit inside) -->`，END 行是
+  `<!-- HAO-UV END -->` —— 按原文去搜，别按简写搜（见 `references/handoff.md`）。
 
 ## 清理 HAO 状态
 

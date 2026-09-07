@@ -38,6 +38,12 @@ install_xray_binary() {
         local current
         current="$(xray_version || true)"
         log_info "xray 已安装：${current:-未知版本}（不重复下载）"
+        # 版本对不上就说出来，别让用户以为装的是固定的那个版本。
+        # 不自动换掉现有二进制：那可能是别人装的，换掉会打断正在跑的服务。
+        case "$current" in
+            *"${version#v}"*) ;;
+            *) log_warning "现有版本和本脚本固定的 $version 不一致。要换成固定版本：先 systemctl stop xray && rm -f $XRAY_BIN，再重跑。" ;;
+        esac
         return 0
     fi
 
@@ -55,7 +61,7 @@ install_xray_binary() {
     actual="$(sha256sum "$tmpdir/xray.zip" | awk '{print $1}')"
     if [ -z "$expected" ]; then
         log_warning "没有 $arch 的预期校验和，跳过校验（下载自 GitHub releases）"
-    elif [ "${HAO_XRAY_VERSION:-$XRAY_VERSION_DEFAULT}" != "$XRAY_VERSION_DEFAULT" ]; then
+    elif [ "$version" != "$XRAY_VERSION_DEFAULT" ]; then
         log_warning "用了非默认版本 $version，内置校验和对应的是 $XRAY_VERSION_DEFAULT，跳过校验"
         log_warning "实际 SHA256: $actual —— 自己去上游的 .dgst 文件核对一下"
     elif [ "$actual" != "$expected" ]; then

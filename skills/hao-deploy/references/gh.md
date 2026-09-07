@@ -38,15 +38,25 @@ apt-get install -y -qq ca-certificates curl gnupg util-linux
 curl -fsSL --connect-timeout 30 \
     https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /tmp/gh-key.gpg
 
-# 只接受这两个官方指纹，其余一律中止
-gpg --show-keys --with-colons /tmp/gh-key.gpg \
-    | awk -F: '$1=="pub"{f=1;next} f&&$1=="fpr"{print $10;f=0}'
-# 期望值：
-#   2C6106201985B60E6C7AC87323F3D4EA75716059
-#   7F38BBB59D064DBCB3D84D725612B36462313325
+# 只接受这两个官方指纹，其余一律中止。**要真的比对，不是打印出来看一眼**：
+GH_FPR_OK="2C6106201985B60E6C7AC87323F3D4EA75716059 7F38BBB59D064DBCB3D84D725612B36462313325"
+GH_FPR="$(gpg --show-keys --with-colons /tmp/gh-key.gpg \
+    | awk -F: '$1=="pub"{f=1;next} f&&$1=="fpr"{print $10;f=0}')"
+matched=0
+for got in $GH_FPR; do
+    for want in $GH_FPR_OK; do
+        [ "$got" = "$want" ] && matched=1
+    done
+done
+[ "$matched" = 1 ] || {
+    rm -f /tmp/gh-key.gpg
+    echo "GitHub CLI keyring 指纹不匹配，实际: $GH_FPR —— 中止，不要装" >&2
+    exit 1
+}
 
 install -d -m 0755 /etc/apt/keyrings /etc/apt/sources.list.d
 install -m 0644 /tmp/gh-key.gpg /etc/apt/keyrings/githubcli-archive-keyring.gpg
+rm -f /tmp/gh-key.gpg
 
 printf '# Managed by HAO\n# Service: gh\ndeb [arch=%s signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' \
     "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/github-cli.list
@@ -135,10 +145,16 @@ gh auth status || true                      # 未登录是预期的
     managed:/etc/apt/sources.list.d/github-cli.list \
     managed:/etc/apt/keyrings/githubcli-archive-keyring.gpg \
     managed:/usr/local/bin/hao-github-authorize
+"$SKILL/scripts/hao-state.sh" intent gh \
+    target_user="$TARGET_USER" machine_role="$ROLE" auth_mode="$AUTH_MODE"
 "$SKILL/scripts/hao-state.sh" handoff
 ```
 
-SSH 私钥**不进清单**。
+SSH 私钥**不进清单**。`auth_mode` 是 `web` 或 `skip`，它决定新机器上要不要重做授权。
+
+`/usr/local/bin/hao-github-authorize` 这个名字带 `hao-` 前缀是历史遗留
+（新写的可执行文件应该用通用命名，见 `SKILL.md` 的路径约定）。**不要在存量机器上
+给它改名**：状态记录、`drift`、以及已经告诉过用户的命令名都指着这个路径。
 
 ## 汇报给用户
 

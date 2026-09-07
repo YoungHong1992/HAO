@@ -42,14 +42,6 @@ assert_contains() {
     ok "$label 包含 $needle"
 }
 
-assert_absent() {
-    local file="$1" needle="$2" label="$3"
-    if grep -qF -- "$needle" "$file"; then
-        fail "$label：不该出现 $needle"
-    fi
-    ok "$label 不含 $needle"
-}
-
 # `|| true`：pipefail 下 grep 找不到东西会让整条赋值失败，
 # 而「找不到占位符」正是我们期望的结果。
 assert_no_placeholder() {

@@ -27,19 +27,36 @@ awk '/MemTotal/ {print int(($2 + 1023) / 1024)}' /proc/meminfo
 
 ## 3. 创建
 
-```bash
-SWAP=/swapfile
-# /swapfile 已存在但不是 swap 文件 → 换个名字，不要覆盖
-[ -e "$SWAP" ] && ! file "$SWAP" | grep -qi swap && SWAP=/swapfile.hao
+`SIZE_MB` 是上一步表格定出来的数字（内存 > 4 GB 且用户没明确要求就根本不做这一步）。
 
-fallocate -l "${SIZE_MB}M" "$SWAP" || dd if=/dev/zero of="$SWAP" bs=1M count="$SIZE_MB" status=none
-chmod 600 "$SWAP"          # 必须 600：swap 里可能有内存中的敏感数据
-mkswap "$SWAP" >/dev/null
+```bash
+SIZE_MB=2048          # ← 按第 2 步的表填
+SWAP=/swapfile
+# 目标文件已存在时不要盲目改写它：
+#   - 是活动 swap  -> 第 1 步就该跳过了，不会走到这里
+#   - 是非活动的 swap 文件（上次装过、fstab 那行丢了）-> 直接复用，别重建
+#   - 是别的东西（用户的文件）-> 换名字，绝不覆盖
+if [ -e "$SWAP" ]; then
+    if file "$SWAP" | grep -qi swap; then
+        REUSE=1                       # 已是 swap 文件，跳过 fallocate/mkswap
+    elif [ -e /swapfile.hao ]; then
+        echo "/swapfile 和 /swapfile.hao 都被占了，停下来问用户要用哪个路径"; exit 1
+    else
+        SWAP=/swapfile.hao
+    fi
+fi
+
+if [ -z "${REUSE:-}" ]; then
+    fallocate -l "${SIZE_MB}M" "$SWAP" || dd if=/dev/zero of="$SWAP" bs=1M count="$SIZE_MB" status=none
+    chmod 600 "$SWAP"      # 必须 600：swap 里可能有内存中的敏感数据
+    mkswap "$SWAP" >/dev/null
+fi
 swapon "$SWAP"
 
-# 持久化（先查重，别重复追加）
+# 持久化（先查重，别重复追加）。nofail 很重要：万一以后有人只删了文件没删这一行，
+# 缺了 nofail 会让这台机器开机时因为一个不存在的 swap 文件而进 emergency shell。
 grep -qsE "^[[:space:]]*${SWAP}[[:space:]]+" /etc/fstab \
-    || echo "$SWAP none swap sw 0 0" >> /etc/fstab
+    || echo "$SWAP none swap sw,nofail 0 0" >> /etc/fstab
 ```
 
 `fallocate` 失败退回 `dd` 不是多余的：某些文件系统上 `fallocate` 生成的文件带
@@ -63,6 +80,7 @@ sysctl -n vm.swappiness          # 应当是 10
 "$SKILL/scripts/hao-state.sh" record swap installed \
     managed:/etc/sysctl.d/99-hao-swap.conf \
     shared:/etc/fstab
+"$SKILL/scripts/hao-state.sh" intent swap size_mb="$SIZE_MB" swap_file="$SWAP" swappiness=10
 "$SKILL/scripts/hao-state.sh" handoff
 ```
 

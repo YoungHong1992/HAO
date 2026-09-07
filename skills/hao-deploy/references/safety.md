@@ -29,15 +29,24 @@
 动任何目标路径之前先判断归属：
 
 ```bash
-"$SKILL/scripts/hao-guard.sh" managed-file <path>          # missing / managed / foreign
+"$SKILL/scripts/hao-guard.sh" managed-file <path>          # missing / managed <svc> / foreign
 "$SKILL/scripts/hao-guard.sh" vhost-owner <server_name>    # free / hao-site / hao / foreign
 "$SKILL/scripts/hao-guard.sh" unit-free <unit_name>        # 同一套输出词汇
 "$SKILL/scripts/hao-guard.sh" repo-identity <dir> <remote> # absent / ok / not-git / remote-mismatch
+"$SKILL/scripts/hao-guard.sh" cert-issuer <fullchain.pem>  # missing / letsencrypt / selfsigned / other <issuer>
 ```
 
-返回 `foreign`、`not-git`、`remote-mismatch` 一律**停下来**，把路径报给用户，
-让用户决定。不要 `rm -rf`，不要"顺手清理一下"。那可能是用户自己放的东西，
-也可能是另一套线上服务。
+返回 `foreign`、`not-git`、`remote-mismatch`、`other <issuer>` 一律**停下来**，
+把路径报给用户，让用户决定。不要 `rm -rf`，不要"顺手清理一下"。那可能是用户自己
+放的东西，也可能是另一套线上服务。
+
+**三个脚本的退出码含义不一样，别用 `&&` 串起来当条件：**
+
+| 脚本 | 退出码的含义 |
+|---|---|
+| `hao-guard.sh` | 只表示"脚本跑通了"。判断结果在 **stdout**，`foreign` 也是退出 0 —— `guard managed-file X && 写入` 会在 foreign 时照样写 |
+| `hao-state.sh drift` | **非 0 = 有漂移**（这是刻意的）。`drift && 下一步` 会在最需要人介入时静默跳过后面 |
+| `hao-secret.sh has` | 退出码就是答案（有这个 key = 0） |
 
 `unit-free` 单独说一句：站点的 systemd 单元用通用命名 `<id>.service`，而
 `/etc/systemd/system/<name>.service` 会**静默覆盖**发行版的同名单元。站点 ID
@@ -55,13 +64,24 @@
 - 需要生成密钥就用 `scripts/hao-secret.sh write`，它会生成并写入 0600 文件，
   值不经过你的上下文。
 - 需要把密钥注入配置文件就用 `hao-secret.sh render`，模板里写 `@@KEY@@`。
-  不要自己读出来再拼进去。
-- 用户自带的密钥用 `KEY=@file:PATH` 或 `KEY=@env:VAR` 传入。**不要**放在命令行
-  参数里。`hao-secret.sh` 会直接拒绝字面量。
+  不要自己读出来再拼进去。两条必须知道的语义：
+  **(1) 全有或全无** —— render 会扫出模板里**所有** `@@KEY@@`，任何一个不在凭据
+  文件里就直接报错，什么都不写。所以模板里的结构性占位符（端口、域名、路径）
+  要**先自己替换掉**，只把密钥留给 render。
+  **(2) 默认权限是 0640** —— 输出文件含密钥就必须显式 `--mode 0600`。
+- 用户自带的密钥用 `KEY=@file:PATH` 传入。**不要**放在命令行参数里。
+  `hao-secret.sh` 会直接拒绝字面量。
+  `KEY=@env:VAR` 也支持，但它读的是**脚本自己进程**的环境变量，实际用起来通常得写成
+  `VAR=值 hao-secret.sh write …` —— 那个赋值又回到了命令行上（每次 Bash 调用都是
+  新 shell，上一次 `export` 不会留下来）。所以**用户自带密钥优先走 `@file:`**；
+  `@env:` 只适合值本来就已经在环境里（不是这次对话里贴进来的）的场合。
 - **确实需要把值取出来喂给某个程序时**（例如深合并 JSON，`render` 帮不上忙），
   唯一可接受的形式是：`VAR="$(...)" program`，值只经过环境变量，
   不落到 argv、不落到 stdout、不落到你的汇报里。`references/claude-code.md`
   第 2 节是这条例外的范本。除此之外不要读凭据文件。
+  这条例外还有一个容易漏的地方：**程序的输出也不能落到一个默认权限的文件里**。
+  `program > /tmp/x` 建出来的是 0644（root 下），里面有密钥就等于公开。
+  先 `install -m 600 /dev/null <目标>` 再重定向，并且别用 `/tmp`。
 - 用户在对话里直接贴了密码：不要复述，提醒他这条消息已经留在记录里了，
   必要时建议改掉。
 - 仓库地址里可能内嵌 token，日志和汇报一律脱敏：
@@ -79,6 +99,8 @@
 - node 站点先用 `hao-guard.sh unit-port` 读回既有端口，不要每次换端口
 - 已经是真实 Let's Encrypt 证书就不要重复申请（有速率限制）
 - 配置文件原地重写，不要每次追加
+- 清空 / 覆盖之前先校验新内容（静态站点的产物目录尤其：先校验产物、发布到旁边的
+  临时目录再整体换过去，别先把线上目录清空）
 
 ## 不该做的事
 

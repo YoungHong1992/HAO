@@ -24,6 +24,9 @@ fi
 printf '== skill structure ==\n'
 "$ROOT_DIR/tests/test-skill-structure.sh"
 
+printf '== site 更新脚本（渲染后真的跑一遍）==\n'
+"$ROOT_DIR/tests/test-site-update.sh"
+
 printf '== hao-guard ==\n'
 "$ROOT_DIR/tests/test-guard.sh"
 

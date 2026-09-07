@@ -48,13 +48,19 @@ if budget > 1536:
 print(f"ok   frontmatter 合法（description + when_to_use = {budget}/1536 字符）")
 
 # allowed-tools 里引用的脚本必须存在
+# 形式是 Bash(${CLAUDE_SKILL_DIR}/scripts/x.sh:*) —— 末尾的 ":*" 是 Claude Code 的
+# 前缀通配写法（不是 " *"），取路径时要把它去掉。
 import os
 at = fields.get("allowed-tools", "")
-for m in re.finditer(r"\$\{CLAUDE_SKILL_DIR\}(/[^\s)*]+)", at):
-    rel = m.group(1).lstrip("/")
+found_tools = 0
+for m in re.finditer(r"\$\{CLAUDE_SKILL_DIR\}(/[^\s)]+)", at):
+    rel = m.group(1).lstrip("/").rstrip(":*")
+    found_tools += 1
     if not os.path.isfile(os.path.join(os.path.dirname(p), rel)):
         raise SystemExit(f"FAIL allowed-tools 引用了不存在的文件: {rel}")
-print("ok   allowed-tools 引用的脚本都存在")
+if found_tools and ":*" not in at:
+    raise SystemExit("FAIL allowed-tools 的通配要写成 Bash(cmd:*)，不是 Bash(cmd *)")
+print("ok   allowed-tools 引用的脚本都存在且用 :* 通配")
 PY
 
 # ---------- SKILL.md 引用的 references/ 与 templates/ 都必须存在 ----------
@@ -138,6 +144,86 @@ while IFS= read -r tok; do
     esac
 done < <(grep -ohE '@@[A-Za-z0-9_]+@@' "$SKILL_DIR"/templates/* 2>/dev/null | sort -u)
 [ "$badtoken" -eq 0 ] && note "模板占位符格式合法" || fail=1
+
+# ---------- 每个占位符都必须在该模板自己的注释头里被提到 ----------
+# 文档只说明一部分 token、剩下的靠猜，是个真实的故障源：漏掉的 @@SITE_ID@@ 会进
+# `# HAO-SITE:` 归属头，之后 vhost-owner 把这个站点当成「别的站点」，
+# 该站点再也无法更新自己。占位符的权威说明就放在模板自己头部，这条测试守住它。
+undocumented=0
+for tmpl in "$SKILL_DIR"/templates/*; do
+    header="$(head -n 40 "$tmpl")"
+    while IFS= read -r tok; do
+        [ -n "$tok" ] || continue
+        case "$header" in
+            *"$tok"*) ;;
+            *)
+                echo "FAIL $(basename "$tmpl") 用了 $tok 但头部注释没说明它" >&2
+                undocumented=1
+                ;;
+        esac
+    done < <(grep -ohE '@@[A-Z][A-Z0-9_]*@@' "$tmpl" | sort -u)
+done
+[ "$undocumented" -eq 0 ] && note "每个模板的占位符都在自己头部有说明" || fail=1
+
+# ---------- 不得引用 certbot nginx 插件才会提供的文件 ----------
+# 这两个文件由 python3-certbot-nginx 提供（`dpkg -S options-ssl-nginx.conf`），
+# 而本 skill 只装 certbot 并用 certonly，所以它们在目标机上永远不存在。
+# include 一个不存在的文件会让 nginx -t 在证书**签发成功之后**失败，
+# 现象和原因看起来毫不相关 —— 这个 bug 真的发生过一次，别让它回来。
+if grep -rn 'letsencrypt/options-ssl-nginx.conf\|letsencrypt/ssl-dhparams.pem' \
+    "$SKILL_DIR/templates" 2>/dev/null | grep -v '^\S*:[0-9]*:\s*#' | grep -q .; then
+    grep -rn 'letsencrypt/options-ssl-nginx.conf\|letsencrypt/ssl-dhparams.pem' \
+        "$SKILL_DIR/templates" | grep -v '^\S*:[0-9]*:\s*#' >&2
+    bad "模板引用了 python3-certbot-nginx 才提供的文件（本 skill 不装那个插件）"
+else
+    note "模板没有引用 certbot nginx 插件的文件"
+fi
+
+# ---------- 每个模块 reference 收尾都要 handoff ----------
+# 漏掉 handoff 的模块不会出现在 HANDOFF.md 的更新里，下一个 agent 读到的是旧状态。
+missing=0
+for doc in "$SKILL_DIR"/references/*.md; do
+    case "$(basename "$doc")" in
+        handoff.md|safety.md|uninstall.md) continue ;;   # 跨模块文档，不是安装过程
+    esac
+    grep -q 'hao-state.sh" handoff\|hao-state.sh handoff' "$doc" \
+        || { echo "FAIL $(basename "$doc") 收尾没有 hao-state.sh handoff" >&2; missing=1; }
+done
+[ "$missing" -eq 0 ] && note "每个模块过程都以 handoff 收尾" || fail=1
+
+# ---------- reference 的代码块里不得用会和环境变量撞名的裸变量 ----------
+# $USER / $GROUP / $HOME_DIR 在任何 root/sudo shell 里本来就有值（USER=root），
+# 用它们装「目标用户」会让 runuser -u "$USER" 静默变成 root，且退出码为 0。
+# 统一用 TARGET_USER / TARGET_GROUP / TARGET_HOME（模板里的 token 也是这三个）。
+# 只检查 ```bash 代码块里的行 —— 正文里解释这个坑本身是应该的。
+python3 - "$SKILL_DIR/references" <<'PY' || fail=1
+import pathlib, re, sys
+
+root = pathlib.Path(sys.argv[1])
+bad = []
+for doc in sorted(root.glob("*.md")):
+    in_code = False
+    for n, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
+        if line.lstrip().startswith("```"):
+            in_code = not in_code
+            continue
+        if not in_code:
+            continue
+        if not re.search(r"\$\{?(USER|GROUP|HOME_DIR)\}?\b", line):
+            continue
+        if re.search(r"SUDO_USER|TARGET_USER|TARGET_GROUP|TARGET_HOME|CC_USER|"
+                     r"USER_|echo \$USER|USER=root", line):
+            continue
+        if line.lstrip().startswith("#"):     # 代码块里的注释在讲这个坑本身
+            continue
+        bad.append(f"{doc.name}:{n}: {line.strip()}")
+
+if bad:
+    for b in bad:
+        print("FAIL 代码块里用了会和环境变量撞名的变量（改用 TARGET_*）: " + b, file=sys.stderr)
+    raise SystemExit(1)
+print("ok   reference 的代码块里没有 $USER/$GROUP/$HOME_DIR 这类撞名变量")
+PY
 
 # ---------- HAO 写的配置模板必须带 Managed by HAO 头（供归属判断） ----------
 missing=0

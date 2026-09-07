@@ -130,15 +130,26 @@ detect_server_ip() {
     printf '%s' "$ip"
 }
 
+# 解析域名的**全部** A 记录。只取第一条会在多 A 记录（轮询）的域名上误判成
+# 「和本机不一致」，白弹一次确认。
 resolve_domain() {
-    local domain="$1" ip=""
+    local domain="$1" ips=""
     # 每条都补 `|| true`：pipefail 下「没解析出结果」会让赋值本身失败，
     # 而那是需要下游判断的正常分支，不是脚本错误。
     if command -v dig >/dev/null 2>&1; then
-        ip="$(dig +short +time=3 "$domain" A 2>/dev/null | grep -E '^[0-9.]+$' | head -1 || true)"
+        ips="$(dig +short +time=3 "$domain" A 2>/dev/null | grep -E '^[0-9.]+$' || true)"
     fi
-    [ -n "$ip" ] || ip="$(getent hosts "$domain" 2>/dev/null | awk '{print $1}' | head -1 || true)"
-    printf '%s' "$ip"
+    [ -n "$ips" ] || ips="$(getent ahostsv4 "$domain" 2>/dev/null | awk '{print $1}' | sort -u || true)"
+    printf '%s' "$ips"
+}
+
+# 某个 IP 是否在域名的解析结果里
+domain_points_here() {
+    local domain="$1" ip="$2" got
+    [ -n "$ip" ] || return 1
+    got="$(resolve_domain "$domain")"
+    [ -n "$got" ] || return 1
+    printf '%s\n' "$got" | grep -qxF "$ip"
 }
 
 validate_domain() {
@@ -306,14 +317,14 @@ inbound_fragments() {
 # 防火墙只做提示，不代改：改防火墙的风险（把自己关在门外）比它省下的事大，
 # 而云服务商的安全组根本不在这台机器上，脚本无论如何也管不到。
 notice_firewall() {
-    local port="$1"
+    local port="$1" n=1
     echo "" >&2
     log_warning "还需要你自己做的事：放行 ${port}/TCP"
-    echo "  1. 云服务商控制台的安全组 / 防火墙规则里放行 ${port}/TCP（最容易漏的一步）" >&2
+    echo "  $((n++)). 云服务商控制台的安全组 / 防火墙规则里放行 ${port}/TCP（最容易漏的一步）" >&2
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "^Status: active"; then
-        echo "  2. 这台机器上 ufw 是开着的，还要执行： sudo ufw allow ${port}/tcp" >&2
+        echo "  $((n++)). 这台机器上 ufw 是开着的，还要执行： sudo ufw allow ${port}/tcp" >&2
     fi
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-        echo "  2. 这台机器上 firewalld 是开着的，还要执行： sudo firewall-cmd --add-port=${port}/tcp --permanent && sudo firewall-cmd --reload" >&2
+        echo "  $((n++)). 这台机器上 firewalld 是开着的，还要执行： sudo firewall-cmd --add-port=${port}/tcp --permanent && sudo firewall-cmd --reload" >&2
     fi
 }

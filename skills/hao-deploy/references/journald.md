@@ -38,6 +38,8 @@ systemd-analyze cat-config systemd/journald.conf | grep -E 'SystemMaxUse|MaxRete
 ```bash
 "$SKILL/scripts/hao-state.sh" record journald installed \
     managed:/etc/systemd/journald.conf.d/hao.conf
+"$SKILL/scripts/hao-state.sh" intent journald \
+    system_max_use="$(sed -n 's/^SystemMaxUse=//p' /etc/systemd/journald.conf.d/hao.conf)"
 "$SKILL/scripts/hao-state.sh" handoff
 ```
 

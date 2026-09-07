@@ -50,8 +50,10 @@ sudo ./install.sh reality --port 8443 --sni www.microsoft.com
 `/etc/hao/xray-reality.client.txt`，权限 0600，自己 `sudo cat` 去看。
 客户端用 v2rayN / v2rayNG / Shadowrocket / sing-box / Mihomo，安全类型选 `reality`。
 
-`--sni` 换别的站点时，那个站点必须**从这台服务器能连上**且支持 TLS 1.3。
-连不上的伪装目标等于没有伪装，脚本会警告。
+`--sni` 换别的站点时，那个站点必须**从这台服务器能连上**，而且它自己得支持
+TLS 1.3（Reality 要复现的就是对方的 TLS 1.3 握手）。脚本只验证可达性这一项，
+TLS 1.3 要你自己确认：`openssl s_client -tls1_3 -connect <站点>:443 </dev/null`。
+连不上的伪装目标等于没有伪装。
 
 ## 工具二：`proxy`（就是「https 域名 端口 用户名 口令」那种）
 
@@ -72,8 +74,9 @@ sudo ./install.sh proxy --domain proxy.example.com --password-env MY_PW
 **没有 `--password` 这个选项，这是故意的。** 命令行参数对同机任何用户可见
 （`/proc/<pid>/cmdline`），口令走那里等于公开。
 
-完整参数在 `/etc/hao/xray-httpsproxy.client.txt`（0600），第一行就是
-`https <域名> <端口> <用户名> <口令>` 的形式，可以直接抄给客户端。
+完整参数在 `/etc/hao/xray-httpsproxy.client.txt`（0600）。里面有一行就是
+`https <域名> <端口> <用户名> <口令>` 的形式（在 `[一行形式]` 那一段下），
+可以直接抄给客户端。
 
 ### 哪些软件能直接用，哪些不能
 
@@ -210,9 +213,11 @@ sudo /usr/local/bin/xray run -test -confdir /usr/local/etc/xray/conf.d   # 配�
 systemctl is-active xray                                                # 服务活着
 ss -tlnp | grep xray                                                    # 端口真的在听
 
-# 代理端到端（口令放 0600 的 curl 配置文件，不进命令行）
-printf 'proxy = "https://<域名>:<端口>"\nproxy-user = "<用户>:<口令>"\n' > /tmp/pc && chmod 600 /tmp/pc
-curl -K /tmp/pc https://api.ipify.org && rm -f /tmp/pc     # 应该返回服务器的公网 IP
+# 代理端到端。口令放 0600 的 curl 配置文件里，既不进命令行参数也不进 shell 历史：
+install -m 600 /dev/null /tmp/pc          # 先建好权限再写内容
+printf 'proxy = "https://<域名>:<端口>"\nproxy-user = "<用户>:' > /tmp/pc
+read -rs -p '口令（不回显）: ' PW && printf '%s"\n' "$PW" >> /tmp/pc && unset PW
+curl -K /tmp/pc https://api.ipify.org; rm -f /tmp/pc    # 应该返回服务器的公网 IP
 
 # Reality 的伪装是否成立：应该看到伪装目标（如微软）的真实证书
 openssl s_client -connect <服务器IP>:8443 -servername www.microsoft.com </dev/null 2>/dev/null \

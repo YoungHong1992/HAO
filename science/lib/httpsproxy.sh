@@ -51,21 +51,21 @@ EOF
 # 域名必须指向本机：不然证书签不下来，客户端也连不到。早停比签完再排查便宜。
 httpsproxy_check_dns() {
     local domain="$1" resolved server_ip
-    resolved="$(resolve_domain "$domain")"
+    resolved="$(resolve_domain "$domain" | tr '\n' ' ')"
     server_ip="$(detect_server_ip)"
 
-    if [ -z "$resolved" ]; then
+    if [ -z "${resolved// /}" ]; then
         log_error "$domain 解析不到任何 A 记录。"
         log_error "先去 DNS 那边加一条 A 记录指向 ${server_ip:-这台机器的公网 IP}，等生效后再来。"
         die "已停止，什么都没改。"
     fi
-    if [ -n "$server_ip" ] && [ "$resolved" != "$server_ip" ]; then
-        log_warning "$domain 解析到 $resolved，而这台机器的公网 IP 是 $server_ip。"
+    if [ -n "$server_ip" ] && ! domain_points_here "$domain" "$server_ip"; then
+        log_warning "$domain 解析到 $resolved，其中没有本机公网 IP $server_ip。"
         log_warning "常见原因：DNS 还没生效；或者用了 Cloudflare 橙云代理——"
         log_warning "橙云不代理 $PROXY_PORT 这类端口，必须把这条记录改成灰云（DNS only）。"
         confirm "仍然继续？（证书很可能签不下来）" || die "已停止，什么都没改。"
     else
-        log_success "$domain 解析到 $resolved，与本机一致"
+        log_success "$domain 解析到 $resolved，包含本机 IP"
     fi
 }
 

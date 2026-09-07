@@ -50,9 +50,19 @@ token 是密钥，走 `hao-secret.sh`，不要读出来拼进 JSON：
 
 然后用 node 深合并。这里必须**深合并**而不能整体渲染，所以 `hao-secret.sh render`
 帮不上忙——这是 `references/safety.md` 里那条例外的唯一场景。取值只经过
-**环境变量**（不进 argv，argv 对同机任意用户可见），也不要 `echo` 出来：
+**环境变量**（不进 argv，argv 对同机任意用户可见），也不要 `echo` 出来。
+
+**输出文件的权限要先建好再写。** 下面用 `install -m 600 /dev/null` 先造一个 0600 的
+空文件再重定向进去，并且放在已经是 0700 的 `~/.claude/` 下、不经过 `/tmp`：
+shell 重定向按 umask 建文件（root 下通常是 0644），而这个文件里有 token，
+同机任意用户都能读；node 在"已有 settings.json 不合法"的分支会 `exit 1`，
+那时后面的清理根本不会执行，token 就留在盘上了。`trap` 是为这种中途退出兜底。
 
 ```bash
+CC_TMP="$TARGET_HOME/.claude/.settings.json.hao.tmp"
+install -m 600 /dev/null "$CC_TMP"
+trap 'rm -f "$CC_TMP"' EXIT
+
 CC_TOKEN="$(sed -n 's/^ANTHROPIC_AUTH_TOKEN=//p' /etc/hao/claude-code.env)" \
 CC_BASE_URL="$BASE_URL" CC_MODEL="$MODEL" SETTINGS_FILE="$SETTINGS" \
 node -e '
@@ -78,10 +88,11 @@ node -e '
   }
   set("API_TIMEOUT_MS", process.env.CC_API_TIMEOUT_MS || "3000000");
   process.stdout.write(JSON.stringify(s, null, 2) + "\n");
-' > /tmp/cc-settings.json
+' > "$CC_TMP"
 
-install -m 600 /tmp/cc-settings.json "$SETTINGS"
-rm -f /tmp/cc-settings.json
+install -m 600 "$CC_TMP" "$SETTINGS"
+rm -f "$CC_TMP"
+trap - EXIT
 chown -R "$CC_USER:$(id -gn "$CC_USER")" "$TARGET_HOME/.claude"
 ```
 
@@ -113,10 +124,16 @@ JSON 校验不过就是失败，停下来。
 "$SKILL/scripts/hao-state.sh" record claude-code installed \
     secret:"$TARGET_HOME/.claude/settings.json" \
     secret:/etc/hao/claude-code.env
+"$SKILL/scripts/hao-state.sh" intent claude-code \
+    cc_user="$CC_USER" \
+    base_url="${BASE_URL:-官方端点}" \
+    model="${MODEL:-默认}"
 "$SKILL/scripts/hao-state.sh" handoff
 ```
 
 `settings.json` 记 `secret`：里面有 token，只登记路径不记哈希。
+`intent` 里只放网关地址和模型这类"怎么再配一台"的信息，**token 不进去**
+（`base_url` 里若内嵌凭据会被自动脱敏，但也不要故意那么填）。
 
 ## 汇报给用户
 

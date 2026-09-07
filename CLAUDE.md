@@ -52,12 +52,21 @@ follows a procedure in `references/` and the user has confirmed.
   SKILL.md's intent→module table, which maps one user goal to several modules; it does
   not belong inside a reference. A reference that installs two things a user could
   reasonably want separately is a reference that should be two files.
-- **`templates/`** — the authoritative content for every file written to a host
-  (nginx configs, systemd units, generated update scripts). Tokens are
-  `@@NAME@@`. Templates carrying secrets are rendered with `hao-secret.sh render`, never
-  by reading a secret and interpolating it. Shared fragments
-  (`snippets/ssl-hardening.conf`, `snippets/acme-challenge.conf`, per-site body files)
-  are written once and `include`d rather than duplicated into each server block.
+- **`templates/`** — the authoritative content for every *multi-line* file written to a
+  host (nginx configs, systemd units, generated update scripts). Tokens are
+  `@@NAME@@`, and each template's header comment lists **all** of its own tokens; a
+  written file must be `grep -n '@@[A-Z]'`-clean before `nginx -t` / `daemon-reload`,
+  because a leftover `@@SITE_ID@@` lands in the `# HAO-SITE:` header and makes
+  `hao-guard.sh vhost-owner` report the site as a *different* site — after which that
+  site can never update itself. Single-line artifacts (the four apt source lines, the
+  `/etc/fstab` swap line) have no template; their content is given verbatim in the
+  owning reference. Templates carrying secrets are rendered with
+  `hao-secret.sh render`, never by reading a secret and interpolating it — note that
+  render is all-or-nothing (every `@@KEY@@` in the template must exist in the
+  credential file, so substitute structural tokens first) and defaults to mode 0640.
+  Shared fragments (`snippets/ssl-hardening.conf`, `snippets/acme-challenge.conf`,
+  per-site body files) are written once and `include`d rather than duplicated into each
+  server block.
 - **Host paths are deliberately generic, with no `hao-` prefix**: `/opt/<site-id>` for
   source, `/var/www/<domain>` for a static docroot, `/etc/nginx/conf.d/<domain>.conf`,
   `/etc/nginx/snippets/<domain>.conf`, `/etc/systemd/system/<site-id>.service`,
@@ -71,8 +80,16 @@ follows a procedure in `references/` and the user has confirmed.
 - **Certificates go through certbot, not acme.sh**, and HAO installs only `certbot`
   (never `python3-certbot-nginx` — that plugin rewrites nginx config, fights the
   templates, and makes `drift` report constantly). Use `certonly --webroot`: certbot
-  issues, templates configure. Renewal needs no HAO involvement (`certbot.timer` ships
-  with the package); the reload hook goes in `/etc/letsencrypt/renewal-hooks/deploy/`.
+  issues, templates configure. **Corollary that bit us once:** because the nginx plugin
+  is never installed, `/etc/letsencrypt/options-ssl-nginx.conf` and
+  `/etc/letsencrypt/ssl-dhparams.pem` never exist on a HAO host (`dpkg -S` shows the
+  first belongs to `python3-certbot-nginx`; the second is copied into place by installer
+  plugins only). A vhost that `include`s them fails `nginx -t` *after a successful
+  issuance* — so all TLS parameters live in `snippets/ssl-hardening.conf` instead, and
+  that snippet is the single authoritative place for protocols/ciphers/session/HSTS.
+  Renewal needs no HAO involvement (`certbot.timer` ships with the package); the reload
+  hook goes in `/etc/letsencrypt/renewal-hooks/deploy/` and is installed by the **nginx**
+  module (it applies to every certificate, not to one site).
   Self-signed fallback goes to Debian's `/etc/ssl/certs` + `/etc/ssl/private`, never
   into `/etc/letsencrypt/`.
 - **`scripts/`** — only three things stay deterministic, because improvising them
