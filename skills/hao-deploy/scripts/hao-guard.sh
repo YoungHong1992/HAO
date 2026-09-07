@@ -14,7 +14,7 @@
 #   hao-guard.sh managed-file <path>
 #   hao-guard.sh cert-issuer <fullchain.pem>
 #   hao-guard.sh repo-identity <dir> <expected_remote>
-#   hao-guard.sh port-free <port>
+#   hao-guard.sh port-free [--tcp|--udp] <port>
 #   hao-guard.sh unit-free <unit_name>
 #   hao-guard.sh unit-port <unit_file>
 #   hao-guard.sh os-supported
@@ -162,14 +162,41 @@ cmd_repo_identity() {
 }
 
 # ==================== port-free ====================
-#   free | busy
+# 默认查 TCP；--udp 查 UDP（HTTP/3 的 443/udp 用得到）。
+#   free | busy | unknown
+#
+# `unknown` 是刻意区分出来的第三种结果：ss 和 netstat 都不在时，以前会输出
+# `free` —— 一个"查不了"被当成"没人占用"，于是后面照样往这个端口写配置。
+# 最小化的镜像里 iproute2 不一定在，这不是理论情况。
 cmd_port_free() {
+    local proto=-t
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --udp) proto=-u; shift ;;
+            --tcp) proto=-t; shift ;;
+            *) break ;;
+        esac
+    done
     local port="${1:-}"
     [ -n "$port" ] || die "port-free 需要 <port>"
     [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] \
         || die "端口必须是 1-65535 的数字: $port"
+
+    local listing="" got=false
+    # UDP 没有 LISTEN 状态，-l 对 ss 仍然表示「只看服务端 socket」
+    if command -v ss >/dev/null 2>&1; then
+        listing="$(ss "${proto}lnH" 2>/dev/null)" && got=true
+    fi
+    if [ "$got" = false ] && command -v netstat >/dev/null 2>&1; then
+        listing="$(netstat "${proto}ln" 2>/dev/null)" && got=true
+    fi
+    if [ "$got" = false ]; then
+        echo "unknown"
+        return 0
+    fi
+
     # 精确匹配「本地地址以 :port 结尾」，避免 :80 误命中 :8080
-    if { ss -tlnH 2>/dev/null || netstat -tln 2>/dev/null; } \
+    if printf '%s\n' "$listing" \
         | awk -v p=":${port}" '{ for (i = 1; i <= NF; i++) if ($i ~ (p "$")) { f = 1; exit } } END { exit(f ? 0 : 1) }'; then
         echo "busy"
     else

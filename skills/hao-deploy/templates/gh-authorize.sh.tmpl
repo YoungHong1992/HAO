@@ -45,7 +45,19 @@ fi
 public_key="${private_key}.pub"
 
 key_title="${host_name}-hao-$(date +%Y%m%d)"
-if gh ssh-key add "$public_key" --title "$key_title"; then
+
+# 先看这把公钥在不在账号里。重跑本脚本（换机器名、补一次授权、上次中途断开）
+# 是完全正常的，而 `gh ssh-key add` 对已存在的公钥会失败 —— 不先查的话用户会
+# 看到一大段"请手工添加公钥"的指引，而公钥其实早就在账号里了。
+#
+# 比对的是公钥的 base64 本体（.pub 的第二个字段），不是标题：同一把钥匙可以用
+# 任何标题传上去，标题相同也不代表是同一把。`gh ssh-key list` 输出里带的正是
+# 这个本体，不是 SHA256 指纹，所以不要拿 ssh-keygen -lf 的指纹去 grep。
+key_body="$(awk '{print $2}' "$public_key" 2>/dev/null)"
+if [ -n "$key_body" ] && gh ssh-key list 2>/dev/null | grep -qF "$key_body"; then
+    key_uploaded=true
+    echo "这把公钥已经在 GitHub 账号里了，不重复上传。"
+elif gh ssh-key add "$public_key" --title "$key_title"; then
     key_uploaded=true
     echo "SSH 公钥已上传到 GitHub（标题：$key_title）。"
 else

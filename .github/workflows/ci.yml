@@ -13,10 +13,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ShellCheck
+      - name: Install ShellCheck and nginx
         run: |
           sudo apt-get update
-          sudo apt-get install -y shellcheck
+          sudo apt-get install -y shellcheck nginx
+          # tests/test-nginx-config.sh 把模板渲染成一套完整配置交给 nginx -t。
+          # 只用它的二进制做语法检查，不需要跑服务 —— 停掉，免得占着 80 端口。
+          sudo systemctl stop nginx || true
 
       # tests/run.sh 会在 claude CLI 可用时顺带跑 plugin validate；
       # CI 上没有 claude CLI，所以下面用独立 step 校验插件清单。

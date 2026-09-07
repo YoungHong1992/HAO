@@ -73,12 +73,17 @@ certbot delete --cert-name <域名>     # 确认后再删
 ## 基础模块（手工反向操作）
 
 - **nginx**：`systemctl disable --now nginx`，再删掉不要的
+  （调优 drop-in 是 `/etc/sysctl.d/99-hao-nginx.conf` 和
+  `/etc/security/limits.d/90-hao-nofile.conf`，删了要重启才恢复默认值）
   `/etc/nginx/conf.d/*.conf`（HAO 写的文件开头有 `# Managed by HAO`，
   用 `hao-guard.sh managed-file` 判断）。删主配置前想清楚：其他站点也靠它。
-  还有两个容易漏的：共享片段 `/etc/nginx/snippets/{ssl-hardening,acme-challenge}.conf`
+  还有两个容易漏的：共享片段
+  `/etc/nginx/snippets/{ssl-hardening,acme-challenge,redirect-to-https}.conf`
   和证书续期钩子 `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh`
   （钩子是 nginx 模块装的；删了它以后证书续期后不会重载 Nginx，
   站点会在续期后继续用旧证书直到下次重启）。
+  安装时如果把包自带的 `conf.d/default.conf` 改名成了 `.disabled`，
+  要不要改回来问用户 —— 那是 nginx 包的欢迎页，多数人并不想要它回来。
 - **docker**：`systemctl disable --now docker` 并按需卸包。
   **注意**：这会影响这台机器上所有容器，不只是 HAO 部署的。日志轮转那部分是
   `daemon.json` 里的 `log-driver` / `log-opts` 两个键，`shared` 资源，

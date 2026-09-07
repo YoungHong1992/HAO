@@ -52,6 +52,35 @@ hao_random_alnum() {
     printf '%s' "${value:0:length}"
 }
 
+# ==================== 字面替换 ====================
+# 把 haystack 里所有 needle 换成 value，结果放在 HAO_SUBST_OUT。
+#
+# 为什么不用 ${haystack//$needle/$value}：bash 的 pattern substitution 对**替换串**
+# 里的 `&` 有特殊语义（代表刚匹配到的文本），而这个语义是后来才加进 bash 的 ——
+# 也就是说同一份脚本在不同 bash 版本上结果不一样。于是一个含 & 的凭据值会被静默
+# 写成 `value=...@@KEY@@...`，而脚本照样报告"已渲染"。
+# 用 %% / # 切分只做纯字面替换，任何版本上结果都一致。
+#
+# 结果走全局变量而不是 stdout：命令替换会吞掉末尾换行，而且密钥值没必要多经过
+# 一次管道。
+HAO_SUBST_OUT=""
+hao_subst_literal() {
+    local haystack="$1" needle="$2" value="$3" out=""
+    while [ -n "$haystack" ]; do
+        case "$haystack" in
+            *"$needle"*)
+                out="${out}${haystack%%"$needle"*}${value}"
+                haystack="${haystack#*"$needle"}"
+                ;;
+            *)
+                out="${out}${haystack}"
+                haystack=""
+                ;;
+        esac
+    done
+    HAO_SUBST_OUT="$out"
+}
+
 # ==================== 现有凭据读取 ====================
 declare -A EXISTING=()
 
@@ -331,8 +360,10 @@ cmd_render() {
     [ -z "$missing" ] || die "凭据文件 $credfile 缺少模板所需的 key:$missing"
 
     for key in "${wanted[@]}"; do
-        content="${content//@@${key}@@/${EXISTING[$key]}}"
+        hao_subst_literal "$content" "@@${key}@@" "${EXISTING[$key]}"
+        content="$HAO_SUBST_OUT"
     done
+    HAO_SUBST_OUT=""
 
     local dir tmp
     dir="$(dirname "$output")"

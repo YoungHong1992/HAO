@@ -194,8 +194,31 @@ install_template() {
     log_success "已写入 $target (mode $mode)"
 }
 
+# 把 haystack 里所有 needle 换成 value，结果放在 SUBST_OUT。
+#
+# 不用 ${haystack//$needle/$value}：bash 的 pattern substitution 对替换串里的 `&`
+# 有特殊语义（代表刚匹配到的文本），而这个语义是后来才加进 bash 的 —— 同一份脚本
+# 在不同 bash 版本上结果不一样，值里带 & 就会被静默写坏成 @@TOKEN@@。
+# 这段和 hao-secret.sh 里的 hao_subst_literal 是同一个修法，两处都要在。
+SUBST_OUT=""
+subst_literal() {
+    local haystack="$1" needle="$2" value="$3" out=""
+    while [ -n "$haystack" ]; do
+        case "$haystack" in
+            *"$needle"*)
+                out="${out}${haystack%%"$needle"*}${value}"
+                haystack="${haystack#*"$needle"}"
+                ;;
+            *)
+                out="${out}${haystack}"
+                haystack=""
+                ;;
+        esac
+    done
+    SUBST_OUT="$out"
+}
+
 # 把模板里的**非密钥**占位符替换掉。密钥占位符留给 hao-secret.sh render。
-# 用 bash 字符串替换而不是 sed：值里的 / 和 & 不需要转义。
 render_plain() {
     local name="$1" output="$2" mode="$3"
     shift 3
@@ -206,8 +229,10 @@ render_plain() {
     for pair in "$@"; do
         key="${pair%%=*}"
         value="${pair#*=}"
-        content="${content//@@${key}@@/$value}"
+        subst_literal "$content" "@@${key}@@" "$value"
+        content="$SUBST_OUT"
     done
+    SUBST_OUT=""
     printf '%s\n' "$content" | write_file "$output" "$mode"
 }
 
@@ -269,6 +294,11 @@ require_port_for_xray() {
     local port="$1" label="$2"
     case "$(guard port-free "$port")" in
         free) log_info "端口 $port 空闲（$label）" ;;
+        unknown)
+            # ss 和 netstat 都不在，查不了。「查不了」不等于「空闲」，
+            # 不能默默往一个可能有人在听的端口上写配置。
+            die "这台机器上既没有 ss 也没有 netstat，无法确认端口 $port 是否空闲。先装上：apt-get install -y iproute2"
+            ;;
         busy)
             if port_listened_by_xray "$port"; then
                 log_info "端口 $port 已由本机 xray 监听（$label），按重跑处理"

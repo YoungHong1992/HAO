@@ -99,6 +99,12 @@ fi
 
 # ---------- port-free ----------
 check "port-free 空闲端口" "free" "$("$GUARD" port-free 64999)"
+check "port-free --udp 空闲端口" "free" "$("$GUARD" port-free --udp 64999)"
+# 查不了必须报 unknown，绝不能报 free —— 后者会让调用方往一个可能有人在听的
+# 端口上写配置。最小化镜像里没有 iproute2 不是理论情况。
+# 用绝对路径的 bash：PATH 被清空之后 `bash` 自己也找不到了
+check "port-free 在没有 ss/netstat 时报 unknown" "unknown" \
+    "$(env PATH=/nonexistent-for-hao-test "$BASH" "$GUARD" port-free 80)"
 port_state="$("$GUARD" port-free 22)"
 case "$port_state" in
     free|busy) echo "ok   port-free 返回合法状态 ($port_state)" ;;

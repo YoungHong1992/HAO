@@ -15,8 +15,14 @@
 # 版本管理器）对 systemd 不可见，也可能随用户目录被清理而消失 ——
 # 见 references/node.md 开头记录的那次事故。
 #
-# @@EXTRA_ENV@@ 是可选的额外环境变量，每行一条 Environment="KEY=VALUE"，
-# 放在 PORT 之后，因此同名时用户值覆盖默认值。不要在这里设 PORT。
+# @@EXTRA_ENV@@ 是可选的额外环境变量，**必须写成一行**：
+#     Environment="KEY1=v1" "KEY2=v2"
+# systemd 允许一条 Environment= 带多个赋值，所以不需要多行。
+# 不要写成多行 —— 上面这些注释里也写着 @@EXTRA_ENV@@ 本身，而替换是整个文件
+# 范围的：多行值的第一行还留在注释里，后面几行会落到 [Service] 之前的注释区，
+# systemd 直接报 "Assignment outside of section"。
+# 它放在 PORT 之后，因此同名时用户值覆盖默认值。不要在这里设 PORT。
+# 没有额外变量就把这一行整行删掉。
 #
 # 占位符（**七个全都要替换**；写入后必须 `grep -n '@@[A-Z]' <目标文件>` 确认为空）:
 #   @@SITE_ID@@     站点 ID，同时是单元名和 /opt 下的目录名，也是归属标记
@@ -26,7 +32,7 @@
 #   @@NODE_BIN@@    必须是 /usr/bin/node
 #   @@START_FILE@@  入口文件，默认 server.js
 #   @@PORT@@        监听端口，必须和 nginx 内容块里的 @@PORT@@ 一致
-#   @@EXTRA_ENV@@   额外环境变量；没有就整行删掉（留空行也行，但别留占位符）
+#   @@EXTRA_ENV@@   额外环境变量，一行；没有就整行删掉（留空行也行，但别留占位符）
 [Unit]
 Description=@@SITE_ID@@ (Node.js application, deployed by HAO)
 After=network.target

@@ -38,8 +38,9 @@ snippet 必须用同一个值。
 | 仓库地址 | ssh / https / 本地路径 | 私有仓库要先能拉取 |
 | 类型 | `static` 还是 `node` | 完全不同的部署路径 |
 | 域名 | 留空 = 80 端口默认站点，不申请证书 | 影响证书与跳转 |
+| 证书联系邮箱 | 有域名时问一句，可以不给（那就明确地不注册联系方式）。**不要从域名拼一个** | 拼出来的地址多半不存在，多级后缀还会算成别人的域名，见第 4 节 |
 | 分支 | 默认 `main` | 拉错分支等于发错版本 |
-| 构建命令 | static 用，如 `npm ci && npm run build` | 留空则直接发布仓库内容 |
+| 构建命令 | **两种类型都要问**。static 如 `npm ci && npm run build`；node 至少要装依赖，如 `npm ci --omit=dev`（还有构建步骤的再接 `&& npm run build`） | node 站点漏了它服务根本起不来（缺 node_modules）；static 留空则直接发布仓库内容 |
 | 产物目录 | static 用，默认 `build`；无构建命令时默认 `.` | 填错发布出空站点 |
 | 入口文件 | node 用，默认 `server.js` | 服务起不来 |
 | 运行用户 | 默认 `$SUDO_USER`，否则 root | 决定文件归属 |
@@ -206,12 +207,19 @@ esac
 ```bash
 STAGE="$DOCROOT.new.$$"
 OLD="$DOCROOT.old.$$"
+# 注意：这一段必须在**同一次** shell 调用里跑完。trap 是进程级的，分成两次
+# Bash 调用的话第一次结束时就会把 $STAGE 删掉，后面 mv 到一个不存在的目录。
 trap 'rm -rf "$STAGE"' EXIT      # 中途失败别在 /var/www 下留一堆 .new.<pid>
 install -d -m 0755 "$STAGE"
 cp -a "$SRC/." "$STAGE/"
 [ "$OUTPUT" = "." ] && rm -rf "$STAGE/.git"   # 别把 .git 发到公网
 chown -R "$TARGET_USER:$TARGET_GROUP" "$STAGE"
-chmod 755 "$STAGE"
+# 权限要显式放开，不能只靠 cp -a 带过来的。`cp -a` 保留源文件的模式，而仓库里
+# 的文件可能是 0600（umask 077 下 clone 出来的就是），Nginx 以 nginx 用户读，
+# 于是站点 403 —— 现象和"产物目录填错"的 404 不一样，容易查错方向。
+# 目录要 755（要能进），文件 644 就够。
+find "$STAGE" -type d -exec chmod 755 {} +
+find "$STAGE" -type f -exec chmod 644 {} +
 
 [ -d "$DOCROOT" ] && mv "$DOCROOT" "$OLD"
 if ! mv "$STAGE" "$DOCROOT"; then
@@ -236,12 +244,39 @@ rm -rf "$OLD"
 
 ## 3b. node 类型：systemd 服务
 
+### 先装依赖（漏了这一步服务一定起不来）
+
+`git clone` 只拿到源码，`node_modules` 不在仓库里。**先装依赖再写单元**，
+否则 `systemctl start` 之后进程立刻退出，现象是 Nginx 502，而真正的原因
+（`Cannot find module 'express'`）只在 journal 里：
+
+```bash
+# BUILD_CMD 是第 0 节问来的，node 类型至少是 `npm ci --omit=dev`。
+# 以目标用户执行：root 装出来的 node_modules 归 root，之后以目标用户运行的服务
+# 可能写不进缓存目录，而且和"不要用 root 拉代码"是同一个理由。
+[ -n "$BUILD_CMD" ] || echo "警告：node 类型没有构建命令，只有零依赖的单文件脚本才可能是对的，回去和用户确认一次"
+runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" CI=true \
+    bash -c "cd /opt/$ID && $BUILD_CMD"
+```
+
+失败就**停在这里**，把原始输出给用户（多半是 Node 主版本不对、私有依赖拉不到、
+或者 `package-lock.json` 没提交）。不要带着装不上的依赖继续往下写单元，
+那样错误会推迟到"端口不就绪"才暴露，排查方向也被带偏。
+
+`npm ci` 需要 `package-lock.json`；只有 `package.json` 时它会直接报错，
+这时改用 `npm install --omit=dev` 并告诉用户为什么（锁文件没提交，
+版本不可重现）。
+
+### 端口分配
+
 端口分配（**幂等关键**）：用户没指定端口时，先从既有单元里读回来复用，
 避免每次重跑都换端口：
 
 ```bash
 PORT="$("$SKILL/scripts/hao-guard.sh" unit-port "/etc/systemd/system/$ID.service")"
-# 读不到再从 8100 起找第一个空闲端口
+# 读不到再从 8100 起找第一个空闲端口。
+# 只接受 `free`：`unknown` 表示 ss/netstat 都不在、根本查不了，那种情况下不能
+# 假定端口空闲（先 apt-get install -y iproute2）。
 [ -n "$PORT" ] || for p in $(seq 8100 8200); do
     [ "$("$SKILL/scripts/hao-guard.sh" port-free "$p")" = free ] && { PORT="$p"; break; }
 done
@@ -333,17 +368,50 @@ TLS、访问控制、限流全都被跳过，此时唯一挡着的是云安全�
 
 | 模板 | 占位符 |
 |---|---|
-| `site-vhost-http.conf` | `SITE_ID` `CONF_NAME` `SERVER_NAME` |
-| `site-vhost-tls.conf` | `SITE_ID` `CONF_NAME` `SERVER_NAME` `DOMAIN` `PORT80_BODY` `QUIC_LISTEN` `ALT_SVC` |
+| `site-vhost-http.conf` | `SITE_ID` `CONF_NAME` `SERVER_NAME` `DEFAULT` |
+| `site-vhost-tls.conf` | `SITE_ID` `CONF_NAME` `SERVER_NAME` `DOMAIN` `PORT80_BODY` `HTTP2` `QUIC_LISTEN` `ALT_SVC` |
 | `site-body-static.conf` | `SITE_ID` `CONF_NAME` `DOCROOT` |
 | `site-body-node.conf` | `SITE_ID` `CONF_NAME` `PORT` |
 | `site-node.service` | `SITE_ID` `TARGET_USER` `TARGET_HOME` `NODE_BIN` `START_FILE` `PORT` `EXTRA_ENV` |
 | `site-update-static.sh.tmpl` | `SITE_ID` `BRANCH` `TARGET_USER` `TARGET_GROUP` `TARGET_HOME` `BUILD_CMD` `OUTPUT_DIR` `DOCROOT` |
-| `site-update-node.sh.tmpl` | `SITE_ID` `BRANCH` `TARGET_USER` `TARGET_HOME` `PORT` |
+| `site-update-node.sh.tmpl` | `SITE_ID` `BRANCH` `TARGET_USER` `TARGET_HOME` `BUILD_CMD` `PORT` |
 
 本文里的变量名和 token 名不完全同名，对应关系：
 `$ID`→`@@SITE_ID@@`、`$ENTRY`→`@@START_FILE@@`、`$OUTPUT`→`@@OUTPUT_DIR@@`、
 `$TARGET_USER`/`$TARGET_GROUP`/`$TARGET_HOME`→同名 token。
+
+### 先探测这台机器上的 nginx 能力（决定三个占位符怎么填）
+
+**不要假设 nginx 是本 skill 从 nginx.org 装的那个。** 第 1 节明确支持"机器上原先
+装过发行版 nginx"，而发行版仓库里的版本往往落后好几年。`http2 on;` 这个独立指令
+是 **nginx 1.25.1 才引入的**，更老的版本上 `nginx -t` 会直接报
+`unknown directive "http2"` —— 而这一步失败发生在证书签发**之后**，很容易被当成
+证书问题去查。所以版本要**现场探测**，不要按发行版猜：
+
+```bash
+NGINX_VER="$(nginx -v 2>&1 | sed -n 's|.*nginx/\([0-9.]*\).*|\1|p')"
+# 1.25.1 起才有独立的 http2 指令。比的是「<= 1.25.0」——nginx 的版本号只有三段，
+# 所以这等价于「< 1.25.1」，而 sort -V -C 在相等时也算有序，直接跟 1.25.1 比会把
+# 1.25.1 自己判成老版本。
+if printf '%s\n1.25.0\n' "$NGINX_VER" | sort -V -C; then
+    HTTP2=""                    # 老版本：整行删掉，HTTP/2 不开
+else
+    HTTP2="http2 on;"
+fi
+# HTTP/3 另外要看模块编译进去了没有
+if nginx -V 2>&1 | grep -q http_v3_module; then
+    QUIC_LISTEN="listen 443 quic;"
+    ALT_SVC="add_header Alt-Svc 'h3=\":443\"; ma=86400';"
+else
+    QUIC_LISTEN=""; ALT_SVC=""
+fi
+echo "nginx $NGINX_VER / http2=${HTTP2:-off} / http3=${QUIC_LISTEN:+on}"
+```
+
+（`sort -V -C` 在"第一行 ≤ 第二行"时退出 0，所以上面那个判断的意思是
+"版本 <= 1.25.0"，也就是"没有 http2 指令"。）三个都可能是空串——**填空串就是把
+那一行删掉**，不要留下空的 `@@TOKEN@@`。HTTP/2 或 HTTP/3 没开不是失败，
+收尾时如实说一句就行。
 
 **每写完一个文件，`nginx -t` / `daemon-reload` 之前先查残留：**
 
@@ -361,7 +429,9 @@ grep -n '@@[A-Z]' "$FILE" && { echo "还有占位符没替换，停下来"; exit
 - `templates/site-body-static.conf` 或 `site-body-node.conf`
   → `/etc/nginx/snippets/$CONF_NAME.conf`
 - `templates/site-vhost-http.conf` → `/etc/nginx/conf.d/$CONF_NAME.conf`
-  （无域名时 `@@SERVER_NAME@@` 填 `_`，`@@CONF_NAME@@` 填站点 ID）
+  （无域名时 `@@SERVER_NAME@@` 填 `_`，`@@CONF_NAME@@` 填站点 ID，
+  `@@DEFAULT@@` 填 ` default_server`（前导空格）——理由见模板注释；
+  有域名时 `@@DEFAULT@@` 填空）
 
 写之前备份，`nginx -t` 失败要能回滚：
 
@@ -396,6 +466,18 @@ curl -sS -o /dev/null -w '%{http_code}\n' -H "Host: $DOMAIN" http://127.0.0.1/
 curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1/
 ```
 
+**状态码不够，还要确认这次请求真的落在本站点上。** 每个站点的内容块都写了自己的
+`access_log`，所以日志里有没有刚才那一行就是最直接的证据：
+
+```bash
+tail -n 1 "/var/log/nginx/$CONF_NAME.access.log"
+```
+
+取不到那一行说明请求被**别的 server 块**接走了（最常见的是包自带的
+`conf.d/default.conf` 抢了 `:80` 的 default server —— 它的欢迎页也返回 200，
+所以只看状态码会得到一个假成功）。这时回 `references/nginx.md` 第 3 节末尾
+把 `default.conf` 停用掉，或者检查 `@@DEFAULT@@` 是否漏填了 `default_server`。
+
 不是 2xx/3xx 就停下来：static 看 `ls "$DOCROOT"`（多半是产物目录填错），
 node 看 `journalctl -u "$ID.service" -n 50`（多半是应用没起来）。
 
@@ -419,17 +501,27 @@ command -v certbot >/dev/null || { apt-get update -y -qq; apt-get install -y -qq
 配置仍由模板负责，两边职责清楚。
 
 ```bash
-# 账户邮箱不能是 example.com / localhost / test.com 这类占位域名，
-# 否则 Let's Encrypt 会拒绝注册。用主域名推导一个：
-MAIN="$(echo "$DOMAIN" | awk -F. '{print $(NF-1)"."$NF}')"
-EMAIL="admin@$MAIN"
-
 # webroot 必须和 snippets/acme-challenge.conf 里的 root 一致
 install -d -m 0755 /var/www/html
 
-certbot certonly --webroot -w /var/www/html -d "$DOMAIN" \
-    --non-interactive --agree-tos -m "$EMAIL"
+# 邮箱：**问用户，不要推导。** 它是 Let's Encrypt 账户的联系地址，
+# 用来收吊销通知和账户恢复。从域名拼一个 admin@<域名> 有两个具体的坏处：
+#   1. 多级后缀会算错。`awk -F. '{print $(NF-1)"."$NF}'` 对 blog.example.co.uk
+#      得到 co.uk —— 那是注册局的域名，等于把账户联系人填成别人；
+#   2. 就算算对了，那个信箱多半不存在，通知发进黑洞。
+# 用户不想给邮箱是可以的，那就明确地不注册联系方式（下面第二条），
+# 而不是编一个。
+if [ -n "${ACME_EMAIL:-}" ]; then
+    certbot certonly --webroot -w /var/www/html -d "$DOMAIN" \
+        --non-interactive --agree-tos -m "$ACME_EMAIL"
+else
+    certbot certonly --webroot -w /var/www/html -d "$DOMAIN" \
+        --non-interactive --agree-tos --register-unsafely-without-email
+fi
 ```
+
+用了 `--register-unsafely-without-email` 要在收尾汇报里说一句：
+证书续期照常（`certbot.timer` 不需要邮箱），但**出问题时 Let's Encrypt 联系不到他**。
 
 certbot 2.x 默认就是 ECDSA 密钥，不用额外指定。
 
@@ -477,11 +569,16 @@ curl -sS -o /dev/null -w '%{http_code}\n' --resolve "$DOMAIN:443:127.0.0.1" "htt
 
 ### ⚠️ 522 教训：什么时候才允许 80→443 跳转
 
-只有**同时**满足以下三条，才填入 301 跳转：
+只有**同时**满足以下三条，`@@PORT80_BODY@@` 才填
+`include /etc/nginx/snippets/redirect-to-https.conf;`（跳转）：
 
 1. `cert-issuer` 确认是 `letsencrypt`（真实证书，不是自签名）；
 2. 用户没有明确要求关闭跳转；
 3. **用户已经确认云服务器安全组/防火墙放行了 443/TCP**。
+
+三条不全满足就填 `include /etc/nginx/snippets/$CONF_NAME.conf;`（不跳转，
+80 直接提供服务）。两种填法都是**一行**，别把跳转那段 location 直接写进模板 ——
+占位符的值必须是单行，理由见模板头部。
 
 第 3 条必须真的问一句。很多 VPS 面板默认只开 80，一旦启用跳转，浏览器被 301
 到打不通的 443，站点会**完全不可访问**（典型现象：Cloudflare 522 超时）。
@@ -490,7 +587,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' --resolve "$DOMAIN:443:127.0.0.1" "htt
 自签名证书**永不跳转**，80 端口直接提供服务。
 
 无论是否跳转，`/.well-known/acme-challenge/` 都必须留在 80 上
-（模板里的 `include /etc/nginx/snippets/acme-challenge.conf` 已经保证了这点），
+（模板里的 `include /etc/nginx/snippets/acme-challenge.conf` 已经保证了这点，
+而且那个片段用的是 `^~` 前缀匹配，不会被内容块里挡点文件的正则抢走），
 否则证书续期会失败。
 
 ## 5. 生成更新脚本
@@ -546,14 +644,16 @@ curl -sS -o /dev/null -w '%{http_code}\n' --resolve "$DOMAIN:443:127.0.0.1" "htt
     output_dir="${OUTPUT:-}" \
     entry="${ENTRY:-}" \
     run_user="$TARGET_USER" \
-    cert="$CERT_STATE"
+    cert="$CERT_STATE" \
+    acme_email="${ACME_EMAIL:-未注册}"
 ```
 
 `repo` 里内嵌的凭据会被自动脱敏,不用自己处理。**不要**往里塞任何密钥——
 key 名**含有** `password`/`passwd`/`token`/`secret`/`apikey`/`api_key`/`credential`/`private_key`
 任一子串的会被直接拒绝（所以 `token_ttl` 这种无害的名字也会被拒，换个词）。
 key 还必须**以小写字母开头**，只含小写字母、数字、下划线。
-node 类型不填 `build_cmd`/`output_dir`，static 类型不填 `entry`，留空即可。
+`build_cmd` 两种类型都要记（node 的是装依赖那条命令，重放时缺了它站点起不来），
+static 不填 `entry`，node 不填 `output_dir`，留空即可。
 
 ## 7. 汇报给用户
 
@@ -571,7 +671,15 @@ node 类型不填 `build_cmd`/`output_dir`，static 类型不填 `entry`，留�
 ## 常见问题
 
 - **站点 404**：static 产物目录填错，`ls $DOCROOT` 看是不是空的。
+- **站点 403（不是 404）**：文件权限。Nginx 以 `nginx` 用户读 docroot，而
+  `cp -a` 保留了仓库里的权限（`umask 077` 下 clone 出来的文件是 0600）。
+  `namei -l "$DOCROOT/index.html"` 一路看下来，然后
+  `find "$DOCROOT" -type d -exec chmod 755 {} +` 加
+  `find "$DOCROOT" -type f -exec chmod 644 {} +`。
 - **502 Bad Gateway**：node 服务没起来，看 `journalctl -u $ID.service`。
+  最常见的一条是 `Cannot find module '...'` —— 依赖没装（跳过了第 3b 节开头那一步，
+  或者更新脚本的 `@@BUILD_CMD@@` 留空了）。补跑 `npm ci --omit=dev` 再 restart，
+  并且把更新脚本重新生成一遍，否则下次更新还会这样。
 - **配好证书后站点全白 / 522**：跳转启用了但 443 没放行。改成不跳转先恢复可用，
   再让用户去开安全组。
 - **`nginx -t` 报找不到 `/etc/letsencrypt/options-ssl-nginx.conf`**：那个文件由
@@ -581,6 +689,17 @@ node 类型不填 `build_cmd`/`output_dir`，static 类型不填 `entry`，留�
   同理。**这跟证书签没签成功无关**，别去查 certbot。
 - **`nginx -t` 报某个 `@@TOKEN@@` 附近语法错误**：占位符没替换完，
   `grep -n '@@[A-Z]' <文件>` 找出来。
+- **`nginx -t` 报 `unknown directive "http2"`**：这台机器上的 nginx 早于 1.25.1
+  （多半来自发行版仓库，不是本 skill 装的 nginx.org 包）。`@@HTTP2@@` 那一行整行删掉，
+  见第 4 节的能力探测。**这跟证书无关**，别去查 certbot。
+- **浏览器访问 IP 看到 "Welcome to nginx!"，站点却部署完了**：包自带的
+  `/etc/nginx/conf.d/default.conf` 抢了 `:80` 的 default server。按
+  `references/nginx.md` 第 3 节末尾把它改名停用，无域名站点的 `@@DEFAULT@@`
+  也要填 ` default_server`。
+- **`nginx -t` 报 `"return"/"location" directive is not allowed here`**：
+  给某个占位符填了**多行**的值。占位符在模板自己的注释头里也出现，整文件替换会把
+  多行值的后几行留在注释区外面，变成活配置。所有占位符的值都必须是单行 ——
+  两处"块"形态（80 端口跳转、无域名站点的 default_server）都已经设计成一行。
 - **本站点更新时被自己拦住（`vhost-owner` 报 `hao-site @@SITE_ID@@`）**：
   上次写入时 `@@SITE_ID@@` 没被替换，归属头成了字面量。改掉那一行即可。
 - **证书申请失败**：先查 DNS 是否指向本机、80 是否可从公网访问、`-w` 的 webroot

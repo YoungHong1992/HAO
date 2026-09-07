@@ -333,18 +333,25 @@ cmd_ownership() {
 }
 
 cmd_services() {
-    local state_file service result recorded
+    local state_file service result recorded width=14
     if [ ! -d "$HAO_STATE_DIR/services" ]; then
         echo "未找到 HAO 状态目录: $HAO_STATE_DIR（这台机器还没有被 HAO 管理过）"
         return 0
     fi
-    printf '%-14s %-10s %-10s %s\n' SERVICE RESULT OWNERSHIP RECORDED_AT
+    # 列宽按最长的 service ID 算，不用固定值：站点的 ID 是 site-<用户起的名字>，
+    # 一长就会把后面几列挤错位，而这张表会被原样抄进 HANDOFF.md 交给下一个 agent。
+    for state_file in "$HAO_STATE_DIR"/services/*.json; do
+        [ -f "$state_file" ] || continue
+        service="$(basename "$state_file" .json)"
+        [ "${#service}" -gt "$width" ] && width="${#service}"
+    done
+    printf "%-${width}s %-10s %-10s %s\n" SERVICE RESULT OWNERSHIP RECORDED_AT
     for state_file in "$HAO_STATE_DIR"/services/*.json; do
         [ -f "$state_file" ] || continue
         service="$(basename "$state_file" .json)"
         result="$(sed -n 's/^[[:space:]]*"result": "\([^"]*\)",*$/\1/p' "$state_file" | head -1)"
         recorded="$(sed -n 's/^[[:space:]]*"recorded_at": "\([^"]*\)",*$/\1/p' "$state_file" | head -1)"
-        printf '%-14s %-10s %-10s %s\n' \
+        printf "%-${width}s %-10s %-10s %s\n" \
             "$service" "$result" "$(cmd_ownership "$service")" "$recorded"
     done
 }

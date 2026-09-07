@@ -18,9 +18,17 @@ HAO（HongAgentOps）不是命令行工具，是一套**给 AI agent 用的部�
 ```bash
 ssh <你的用户>@<服务器IP>
 
-# Node.js 18+（Debian/Ubuntu 自带的可能太旧，用 NodeSource）
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
+# Node.js 18+。发行版自带的可能太旧，用 NodeSource 的 apt 源。
+# 这里不用 `curl … | bash` 那种一键脚本：装完这一步之后，同样的事情由 HAO 的
+# node 模块来做（keyring + apt 源，见 skills/hao-deploy/references/node.md），
+# 两边保持一个做法。
+sudo apt-get update && sudo apt-get install -y ca-certificates curl gnupg
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+    | sudo gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
+    | sudo tee /etc/apt/sources.list.d/nodesource.list
+sudo apt-get update && sudo apt-get install -y nodejs
 
 sudo npm install -g @anthropic-ai/claude-code
 claude          # 首次运行会让你登录

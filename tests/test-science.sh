@@ -100,7 +100,7 @@ FAKE_PRIVATE="cHJpdmF0ZS1rZXktZm9yLXRlc3Rpbmc" \
 FAKE_PUBLIC="cHVibGljLWtleS1mb3ItdGVzdGluZw" \
 FAKE_UUID="11111111-2222-3333-4444-555555555555" \
 FAKE_SHORTID="0123456789abcdef" \
-FAKE_USER="yanghong-usr" \
+FAKE_USER="example-usr" \
 FAKE_PASS="not-a-real-password" \
 "$SECRET_SH" write "$CRED" \
     PRIVATE_KEY=@env:FAKE_PRIVATE \
@@ -158,7 +158,7 @@ assert inbound["protocol"] == "http", inbound["protocol"]
 settings = inbound["settings"]
 assert "accounts" in settings, "缺少 accounts —— 会变成无认证的开放代理"
 assert "users" not in settings, "写成了 users，xray 不认这个字段"
-assert settings["accounts"][0]["user"] == "yanghong-usr"
+assert settings["accounts"][0]["user"] == "example-usr"
 assert settings["accounts"][0]["pass"] == "not-a-real-password"
 assert settings["allowTransparent"] is False
 stream = inbound["streamSettings"]
@@ -191,7 +191,7 @@ render_plain "$SCIENCE_DIR/templates/httpsproxy-client.txt.tmpl" "$WORK/pc.stage
 "$SECRET_SH" render "$WORK/pc.staged" "$WORK/httpsproxy-client.txt" --from "$CRED" --mode 0600 >/dev/null
 assert_no_placeholder "$WORK/httpsproxy-client.txt" "httpsproxy-client.txt"
 # 用户要的就是这一行：https 域名 端口 用户名 口令
-grep -qE '^https proxy\.example\.com 8444 yanghong-usr not-a-real-password$' "$WORK/httpsproxy-client.txt" \
+grep -qE '^https proxy\.example\.com 8444 example-usr not-a-real-password$' "$WORK/httpsproxy-client.txt" \
     || fail "缺少「https 域名 端口 用户名 口令」那一行"
 ok "客户端一行形式正确"
 assert_contains "$WORK/httpsproxy-client.txt" "只转 TCP" "httpsproxy-client.txt"
@@ -200,7 +200,7 @@ render_plain "$SCIENCE_DIR/templates/curl-proxy-check.conf.tmpl" "$WORK/cc.stage
     DOMAIN=proxy.example.com PORT=8444
 "$SECRET_SH" render "$WORK/cc.staged" "$WORK/curl.conf" --from "$CRED" --mode 0600 >/dev/null
 assert_no_placeholder "$WORK/curl.conf" "curl-proxy-check.conf"
-assert_contains "$WORK/curl.conf" 'proxy-user = "yanghong-usr:not-a-real-password"' "curl-proxy-check.conf"
+assert_contains "$WORK/curl.conf" 'proxy-user = "example-usr:not-a-real-password"' "curl-proxy-check.conf"
 
 # ==================== 4. 入口脚本的拒绝条件 ====================
 echo ""
