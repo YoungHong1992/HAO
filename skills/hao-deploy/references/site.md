@@ -25,6 +25,18 @@ HAO 部署出来的东西必须让**不知道 HAO 存在的运维人员**也能�
 `<CONF_NAME>` = 有域名时填域名，无域名时填站点 ID。同一个站点的 vhost 和
 snippet 必须用同一个值。
 
+**vhost 的文件名不只是名字**：`conf.d/*.conf` 按文件名排序 include，而没人显式写
+`default_server` 时，某个地址上的第一个 server 块就是默认站点。所以在一台已有站点
+的机器上加一个新 vhost，可能仅因为文件名排在前面就把"未知域名落到谁身上"换掉了。
+第 4 节有一步专门查这件事。
+
+**别照用户仓库里的部署文档改路径。** 仓库里常有一份为**上一台机器**写的
+`DEPLOYMENT.md` / `deploy/` 目录（写着 `/root/projects/…`、源码编译的
+`/usr/local/nginx/…` 之类）。那是历史，不是这台机器的现实：照它走会把东西装到
+和本表不一致的地方，接手的人两头都找不到。做法是 —— **用本表的路径，不改用户的
+仓库文件，但在收尾汇报里明确说一句"你仓库里的那份部署文档和这次的实际布局不一致"**。
+不说的话，用户下次照那份文档操作会扑空。
+
 **归属判断不受影响**：`hao-guard.sh` 读的是文件里的 `# Managed by HAO` /
 `# HAO-SITE:` 注释头，不看文件名。那行注释也不是"特化"——certbot 写
 `# managed by Certbot`，Ansible 写 `# Ansible managed`，在生成的配置里标明出处
@@ -38,9 +50,10 @@ snippet 必须用同一个值。
 | 仓库地址 | ssh / https / 本地路径 | 私有仓库要先能拉取 |
 | 类型 | `static` 还是 `node` | 完全不同的部署路径 |
 | 域名 | 留空 = 80 端口默认站点，不申请证书 | 影响证书与跳转 |
+| 域名走不走 CDN | 走了就再问一句「CDN 到源站是 HTTP 还是 HTTPS」（Cloudflare 叫 SSL/TLS 模式） | 回源走 HTTP 时源站开跳转 = 无限重定向，站点完全打不开，见第 4 节 |
 | 证书联系邮箱 | 有域名时问一句，可以不给（那就明确地不注册联系方式）。**不要从域名拼一个** | 拼出来的地址多半不存在，多级后缀还会算成别人的域名，见第 4 节 |
 | 分支 | 默认 `main` | 拉错分支等于发错版本 |
-| 构建命令 | **两种类型都要问**。static 如 `npm ci && npm run build`；node 至少要装依赖，如 `npm ci --omit=dev`（还有构建步骤的再接 `&& npm run build`） | node 站点漏了它服务根本起不来（缺 node_modules）；static 留空则直接发布仓库内容 |
+| 构建命令 | **两种类型都要问**。先看仓库用哪个包管理器（第 3a 节有判据表，`pnpm-lock.yaml` 的仓库用 `npm ci` 是装不对的）。static 如 `pnpm install --frozen-lockfile && pnpm run build`；node 至少要装依赖，如 `npm ci --omit=dev` | node 站点漏了它服务根本起不来（缺 node_modules）；包管理器用错则依赖树不对或被 `preinstall` 钩子拦住；static 留空则直接发布仓库内容 |
 | 产物目录 | static 用，默认 `build`；无构建命令时默认 `.` | 填错发布出空站点 |
 | 入口文件 | node 用，默认 `server.js` | 服务起不来 |
 | 运行用户 | 默认 `$SUDO_USER`，否则 root | 决定文件归属 |
@@ -150,10 +163,14 @@ curl -s --connect-timeout 5 https://api.ipify.org   # 本机公网 IP
 浏览器警告后更困惑）。用户不知道怎么配 DNS 时，指给他
 `docs/cloudflare-dns-guide.md`（在 skill 所在仓库根的 `docs/` 下）。
 
-**一个例外**：域名走了 Cloudflare 橙云（代理开启）时，解析出来的是 Cloudflare
+**一个例外**：域名走了 CDN（Cloudflare 橙云这类代理模式）时，解析出来的是 CDN
 边缘节点 IP，和本机公网 IP 天然不一致。这不是配错了，不要因此停下——
 证书申请仍能通过（走 80 端口的 ACME HTTP 校验）。判断方法：解析结果不是本机 IP，
-但用户确认域名托管在 Cloudflare 且开了代理。
+但用户确认域名托管在 CDN 且开了代理。
+
+**但要记住这件事，第 4 节还要用到它**：走了 CDN 就必须额外问一句"CDN 到源站是
+HTTP 还是 HTTPS"，那个答案决定源站能不能开 80→443 跳转（回源走 HTTP 时开跳转
+= 无限重定向，站点完全打不开）。一次问完，别等配到一半再回头问。
 
 ## 2. 同步代码
 
@@ -181,8 +198,65 @@ runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" git -C "$DIR" reset --hard 
 
 `DOCROOT` = `/var/www/$DOMAIN`，无域名时 `/var/www/$ID`。
 
+### 先看这个仓库用哪个包管理器（**不要一律 npm**）
+
+前端项目锁定 pnpm / yarn / bun 的很常见，而用错包管理器的表现是"装了一堆依赖但
+构建失败"，或者仓库的 `preinstall` 钩子直接把你拦住（`only-allow pnpm` 就是干
+这个的）。判据在仓库里，按顺序看：
+
 ```bash
-# 构建（以目标用户执行，CI=true 让多数前端工具进入非交互模式）
+# 1. package.json 的 packageManager 字段是最权威的（Node 的 corepack 认它）
+sed -n 's/.*"packageManager"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "/opt/$ID/package.json"
+# 2. 没有那个字段就看 lockfile
+ls "/opt/$ID" | grep -E '^(pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|package-lock\.json)$'
+```
+
+| 看到 | 构建命令用 | 装法 |
+|---|---|---|
+| `package-lock.json` / 什么都没有 | `npm ci && npm run build` | 已经有了（`node` 模块带 npm） |
+| `pnpm-lock.yaml` 或 `packageManager: pnpm@x` | `pnpm install --frozen-lockfile && pnpm run build` | corepack，见下 |
+| `yarn.lock` 或 `packageManager: yarn@x` | `yarn install --immutable && yarn build` | corepack，见下 |
+| `bun.lockb` | `bun install --frozen-lockfile && bun run build` | 上游没有 apt 源，**停下来问用户**是否接受 `curl \| bash` 装 bun |
+
+pnpm / yarn 用 **corepack**，它随 Node 一起装好了，不引入第三方源，而且版本由仓库
+的 `packageManager` 字段决定（比我们自己挑一个版本更对）：
+
+```bash
+# shim 装 /usr/local/bin，和 uv 模块同一个约定 —— 不要装进 /usr/bin，那是 apt 的地盘
+corepack enable pnpm --install-directory /usr/local/bin      # 或 yarn
+command -v pnpm
+```
+
+**构建命令里必须带 `COREPACK_ENABLE_DOWNLOAD_PROMPT=0`。** corepack 第一次取某个
+版本的包管理器时会弹一个确认提示；更新脚本是**无人值守**跑的，那个提示会让它
+永久挂住，而且日志里看不出在等什么。仓库以后升级 `packageManager` 版本就会再触发
+一次，所以这个环境变量不是只在首次装的时候需要：
+
+```bash
+BUILD_CMD='COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm install --frozen-lockfile && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm run build'
+```
+
+corepack 的 shim 记 **`observed` 而不是 `managed`**：`/usr/local/bin/pnpm` 是个指向
+corepack 内部文件的符号链接，内容由 `nodejs` 包决定，Node 一升级它就变 ——
+记 `managed` 会让 `drift` 从此天天误报。记在 `node` 服务下（它是 Node 工具链的一
+部分，下一个站点也能直接用），不要记在某个站点下。
+
+### 构建前看一眼内存
+
+小内存 VPS 上跑前端构建被 OOM killer 杀掉是经典故障，而它的报错只有一个词
+`Killed` —— 和"依赖装错""配置写错"看起来毫无区别，极难自查：
+
+```bash
+free -m | awk '/^Mem:/{print "内存 " $2 " MB"} /^Swap:/{print "swap " $2 " MB"}'
+```
+
+内存 < 2 GB 且没有 swap，**先跑 `swap` 模块再回来构建**（见 `references/swap.md`）。
+这是 swap 模块存在的主要理由之一，别等构建被杀了才想起来。
+
+### 构建
+
+```bash
+# 以目标用户执行，CI=true 让多数前端工具进入非交互模式
 runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" CI=true \
     bash -c "cd /opt/$ID && $BUILD_CMD"
 ```
@@ -250,8 +324,12 @@ rm -rf "$OLD"
 否则 `systemctl start` 之后进程立刻退出，现象是 Nginx 502，而真正的原因
 （`Cannot find module 'express'`）只在 journal 里：
 
+**包管理器同样先按第 3a 节那张表判一次**（`pnpm-lock.yaml` 的仓库用 `npm ci` 装不出
+正确的依赖树），node 类型对应的是 `--omit=dev` / `--prod` 那一档。
+
 ```bash
-# BUILD_CMD 是第 0 节问来的，node 类型至少是 `npm ci --omit=dev`。
+# BUILD_CMD 是第 0 节问来的，node 类型至少是 `npm ci --omit=dev`
+# （pnpm 仓库则是 `pnpm install --frozen-lockfile --prod`）。
 # 以目标用户执行：root 装出来的 node_modules 归 root，之后以目标用户运行的服务
 # 可能写不进缓存目录，而且和"不要用 root 拉代码"是同一个理由。
 [ -n "$BUILD_CMD" ] || echo "警告：node 类型没有构建命令，只有零依赖的单文件脚本才可能是对的，回去和用户确认一次"
@@ -442,12 +520,18 @@ BAK=""
 # ... 写入 ...
 if nginx -t >/dev/null 2>&1; then
     systemctl reload nginx || systemctl start nginx
+    # 成功了就把备份删掉。**不要留在 conf.d 里**：备份是 HAO 文件的副本，同样带着
+    # `# Managed by HAO` 和 `# HAO-SITE:` 头，于是每次重新部署都在 conf.d 下攒一个
+    # 无主副本（`hao-state.sh orphans` 会把它们全列出来）。nginx 只 include
+    # `*.conf`，所以它们不影响运行 —— 但下一个来看这个目录的人分不清哪个是线上的。
+    [ -n "$BAK" ] && rm -f "$BAK"
 else
     nginx -t 2>&1            # 原始输出给用户看
     # 有备份就恢复，没备份才删。**不要**写成 `[ -n "$BAK" ] && cp … || rm -f …`：
     # 那个形式在 cp 本身失败时也会执行 rm，把还在服务的配置删掉。
     if [ -n "$BAK" ]; then
         cp -a "$BAK" "$CONF"
+        rm -f "$BAK"
     else
         rm -f "$CONF"
     fi
@@ -456,6 +540,9 @@ else
     exit 1
 fi
 ```
+
+（要留一份配置历史的话，留在 `conf.d` 之外 —— 那个目录是 nginx 的工作目录，
+不是版本库。真正可重放的东西是 `DEPLOY-INTENT.md`。）
 
 **站点能否真的取到内容要自己验一次**，别停在 `nginx -t` 通过就报成功：
 
@@ -477,6 +564,45 @@ tail -n 1 "/var/log/nginx/$CONF_NAME.access.log"
 `conf.d/default.conf` 抢了 `:80` 的 default server —— 它的欢迎页也返回 200，
 所以只看状态码会得到一个假成功）。这时回 `references/nginx.md` 第 3 节末尾
 把 `default.conf` 停用掉，或者检查 `@@DEFAULT@@` 是否漏填了 `default_server`。
+
+### 加一个站点会改变别人的默认站点 —— 查一次并如实汇报
+
+`include /etc/nginx/conf.d/*.conf` 是**按文件名排序**展开的，而某个地址上的
+default server 是"第一个 server 块"（没人显式写 `default_server` 时）。于是给一台
+已经有站点的机器**新增**一个 vhost，可能仅仅因为文件名排在前面，就把"未知域名 /
+直接用 IP 访问时看到谁"这件事换掉了 —— 而两个站点各自的域名都还正常，
+所以从站点验证里完全看不出来。
+
+写完 vhost 一定要查一次，变了就告诉用户：
+
+```bash
+# 谁在 :80 / :443 上当默认站点（显式声明的话这里会列出来）
+nginx -T 2>/dev/null | grep -n 'default_server' || echo "没有任何 server 显式声明 default_server，按文件名排序决定"
+ls /etc/nginx/conf.d/*.conf              # 排在最前面的那个就是隐式默认站点
+# 直接问一次：未知域名会落到谁身上
+curl -sS -o /dev/null -w '%{http_code}\n' -H "Host: nonexistent.invalid" http://127.0.0.1/
+tail -n 1 /var/log/nginx/*.access.log     # 哪个站点的日志里多了这一条，就是它
+```
+
+这不是错误，多数情况下也无害（各站点的域名都正确命中）。但它是一个**这次部署
+改变了其他站点行为**的事实，收尾汇报里要提一句；用户不想要就给他两条路：把新站点
+的文件名改成排序在后，或者显式给某个站点加 `default_server`（改别人的 vhost
+之前要单独确认，那是 `foreign` 资源）。
+
+### 别停在源站直连 —— 域名走 CDN 时要从公网再取一次
+
+上面几条 `curl` 用的都是 `-H "Host:"` 或 `--resolve ...:127.0.0.1`，走的是**源站
+直连**。它证明的是"nginx 配对了"，证明不了"用户在浏览器里能打开"：安全组没放行
+443、CDN 没回源、DNS 还没生效，源站照样返回 200。
+
+```bash
+curl -sS -o /dev/null -w 'http  -> %{http_code}\n' "http://$DOMAIN/"   --max-time 15
+curl -sS -o /dev/null -w 'https -> %{http_code}\n' "https://$DOMAIN/"  --max-time 15
+```
+
+取不到就**如实说"源站已就绪，但从公网还打不开"**，并给出最可能的三个原因
+（安全组 443、CDN 回源设置、DNS 生效），不要报成"部署完成"。这一步在 CDN 后面
+尤其重要 —— 源站和公网是两条不同的路径。
 
 不是 2xx/3xx 就停下来：static 看 `ls "$DOCROOT"`（多半是产物目录填错），
 node 看 `journalctl -u "$ID.service" -n 50`（多半是应用没起来）。
@@ -503,7 +629,38 @@ command -v certbot >/dev/null || { apt-get update -y -qq; apt-get install -y -qq
 ```bash
 # webroot 必须和 snippets/acme-challenge.conf 里的 root 一致
 install -d -m 0755 /var/www/html
+```
 
+**先自己探一次 challenge 路径，再去请求 Let's Encrypt。** 这一步不能省：失败的
+验证要算进速率限制（每个域名每小时只有几次），而"DNS 指对了"根本不等于"这个路径
+取得到" —— webroot 和 `-w` 不一致、域名被另一个 server 块抢走、CDN 没回源，
+任一条都会让验证失败，而 certbot 的报错只会说"challenge failed"，不会告诉你是哪一环。
+自己探一次的成本是零：
+
+```bash
+PROBE="hao-probe-$(openssl rand -hex 6)"
+install -d -m 0755 /var/www/html/.well-known/acme-challenge
+printf '%s\n' "$PROBE" > "/var/www/html/.well-known/acme-challenge/$PROBE"
+chmod 644 "/var/www/html/.well-known/acme-challenge/$PROBE"
+
+# -L -k 是刻意的：Let's Encrypt 做 http-01 验证时会跟随重定向，且不校验跳转到
+# https 之后的证书。探测要模仿它的行为，否则一个 80->443 跳转就会让我们误判成
+# 「路径不可达」而白白放弃一次本来能成功的签发。
+# 走**公网域名**而不是 127.0.0.1 —— 回环取到只证明 nginx 配对了，证明不了
+# Let's Encrypt 能从外面进来（安全组、CDN 回源、DNS 都在这条路上）。
+GOT="$(curl -sSLk --max-time 15 "http://$DOMAIN/.well-known/acme-challenge/$PROBE" 2>/dev/null || true)"
+rm -f "/var/www/html/.well-known/acme-challenge/$PROBE"
+[ "$GOT" = "$PROBE" ] || {
+    echo "取不到 http://$DOMAIN/.well-known/acme-challenge/ 下的文件，先别申请证书。"
+    echo "按这个顺序查：80 端口能不能从公网进来（安全组）→ 域名是不是被别的 server 块抢走"
+    echo "（hao-guard.sh vhost-owner）→ snippets/acme-challenge.conf 的 root 是否就是 /var/www/html"
+    exit 1
+}
+```
+
+探测通过了再签：
+
+```bash
 # 邮箱：**问用户，不要推导。** 它是 Let's Encrypt 账户的联系地址，
 # 用来收吊销通知和账户恢复。从域名拼一个 admin@<域名> 有两个具体的坏处：
 #   1. 多级后缀会算错。`awk -F. '{print $(NF-1)"."$NF}'` 对 blog.example.co.uk
@@ -525,20 +682,32 @@ fi
 
 certbot 2.x 默认就是 ECDSA 密钥，不用额外指定。
 
-**续期不需要 HAO 做任何事**：`certbot.timer` 随包安装并自动启用。验证一下并把
-结果告诉用户：
+**续期不需要 HAO 做任何事**：`certbot.timer` 随包安装并自动启用。但"timer 在跑"
+证明不了"续期会成功" —— webroot 变了、challenge 路径被别的 server 块抢走，都会让
+它在**60 天后**才失败一次，那时没人在看。用 `--dry-run` 当场证明整条续期路径通，
+它走 staging 服务器，不消耗正式速率限制、不动现有证书：
 
 ```bash
-systemctl list-timers certbot.timer --no-pager
+systemctl list-timers certbot.timer --no-pager        # timer 存在且有下次触发时间
+certbot renew --dry-run                                # 必须以 "all simulated renewals succeeded" 结束
 ```
 
+`--dry-run` 会把这台机器上**所有**证书都模拟一遍（包括别人装的），所以它顺带也验了
+存量站点的续期。有哪一张失败就如实报出来是哪一张 —— 那是既有问题，不是这次部署
+造成的，但用户需要知道。
+
 续期后重载 Nginx 的 deploy 钩子**由 `nginx` 模块安装**（它对所有证书生效，
-不是某个站点专属的），见 `references/nginx.md` 第 4 节。这里只确认它在：
+不是某个站点专属的），见 `references/nginx.md` 第 4 节。这里只确认它在，并且
+真的能跑（钩子里有 `nginx -t`，跑一次是安全的）：
 
 ```bash
 [ -x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh ] \
     || echo "钩子不在，按 references/nginx.md 第 4 节装上，否则续期后 Nginx 仍用旧证书"
+/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh   # 退出码 0 才算这条链路通
 ```
+
+（`--dry-run` 默认**不执行** deploy 钩子，所以钩子要单独验一次。两件事都验过，
+才能对用户说"续期不用你管"。）
 
 申请失败时降级为自签名（站点仍可用，只是浏览器告警），并**如实告诉用户这是
 自签名证书**，不要说成"证书已配置好"。自签名证书放 Debian 标准位置，
@@ -574,7 +743,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' --resolve "$DOMAIN:443:127.0.0.1" "htt
 
 1. `cert-issuer` 确认是 `letsencrypt`（真实证书，不是自签名）；
 2. 用户没有明确要求关闭跳转；
-3. **用户已经确认云服务器安全组/防火墙放行了 443/TCP**。
+3. **用户已经确认云服务器安全组/防火墙放行了 443/TCP**；
+4. **域名如果走了 CDN，用户已经确认 CDN 到源站也是 HTTPS**（见下面那一节）。
 
 三条不全满足就填 `include /etc/nginx/snippets/$CONF_NAME.conf;`（不跳转，
 80 直接提供服务）。两种填法都是**一行**，别把跳转那段 location 直接写进模板 ——
@@ -583,6 +753,25 @@ curl -sS -o /dev/null -w '%{http_code}\n' --resolve "$DOMAIN:443:127.0.0.1" "htt
 第 3 条必须真的问一句。很多 VPS 面板默认只开 80，一旦启用跳转，浏览器被 301
 到打不通的 443，站点会**完全不可访问**（典型现象：Cloudflare 522 超时）。
 这个故障对小白来说极难自查——站点刚才还好好的，配完证书就全白了。
+
+### 域名走 CDN 时，跳转还要再问一件事
+
+第 1 节讲过"解析到 CDN 的 IP 不算配错，不要停下"。那只是 CDN 带来的**第一个**
+影响。第二个在这里：**CDN 到源站用什么协议，决定源站能不能跳转。**
+
+以 Cloudflare 的 SSL/TLS 模式为例：
+
+| CDN→源站 | 源站开 80→443 跳转的后果 |
+|---|---|
+| Full / Full (strict)（回源走 HTTPS） | 正常。可以开 |
+| **Flexible（回源走 HTTP）** | **无限重定向，站点完全打不开**。CDN 用 http 回源 → 源站 301 到 https → CDN 又用 http 回源 → 循环 |
+
+现象和 522 教训一模一样（配完证书站点全白），但原因完全不同，所以两条都要查。
+**判断不了就不要开跳转**：不跳转的代价只是少一次跳转，而且 CDN 那边通常已经有
+"Always Use HTTPS"可以开，比在源站冒这个风险划算。
+
+用户说不清自己用的是哪个模式时，让他去 CDN 控制台看一眼再回来，不要替他猜 ——
+这一条猜错的代价是站点完全不可访问。
 
 自签名证书**永不跳转**，80 端口直接提供服务。
 
@@ -663,8 +852,13 @@ static 不填 `entry`，node 不填 `output_dir`，留空即可。
 - 是否启用了跳转，以及 443 放行的提醒
 - 更新命令：`sudo $ID-update`
 - 代码目录 `/opt/$ID`、发布目录 / 服务单元 `$ID.service` 与端口
-- 证书由 certbot 自动续期（`certbot.timer`），**不需要他做任何事**
+- 证书由 certbot 自动续期（`certbot.timer`），**不需要他做任何事** ——
+  这句话只有在 `certbot renew --dry-run` 通过、且 deploy 钩子跑过一次之后才能说
 - node 站点若绑在 `0.0.0.0`，把第 3b 节那段提醒讲给他
+- **这次部署改变了什么别的东西**：默认站点变了没有（第 4 节那一步查出来的）、
+  为了构建装了什么全局工具（例如 corepack 的 pnpm shim 落在 `/usr/local/bin`）
+- 用户仓库里那份为别的机器写的部署文档和实际布局不一致（如果有）
+- 只在源站验证通过但公网还打不开时，**说清楚是哪一段不通**，不要报"部署完成"
 - **让他把 `/var/lib/hao/DEPLOY-INTENT.md` 存一份到自己的笔记或仓库里**——
   机器销毁后，那是重建这个站点的唯一依据
 
@@ -680,6 +874,14 @@ static 不填 `entry`，node 不填 `output_dir`，留空即可。
   最常见的一条是 `Cannot find module '...'` —— 依赖没装（跳过了第 3b 节开头那一步，
   或者更新脚本的 `@@BUILD_CMD@@` 留空了）。补跑 `npm ci --omit=dev` 再 restart，
   并且把更新脚本重新生成一遍，否则下次更新还会这样。
+- **构建只输出一行 `Killed`**：被 OOM killer 杀了，不是配置问题。`free -m` 看内存，
+  按第 3a 节先跑 `swap` 模块。
+- **构建报 `ERR_PNPM_...` / `only-allow` 拦住 / 依赖装了但构建失败**：包管理器用错了。
+  按第 3a 节的表重新判一次（`pnpm-lock.yaml` 的仓库必须用 pnpm），改完把更新脚本
+  也重新生成一遍。
+- **更新脚本卡住不动、日志停在装依赖那一步**：corepack 在等"要不要下载这个版本的
+  包管理器"的确认，而无人值守跑没人回答它。构建命令里加
+  `COREPACK_ENABLE_DOWNLOAD_PROMPT=0`（见第 3a 节），重新生成更新脚本。
 - **配好证书后站点全白 / 522**：跳转启用了但 443 没放行。改成不跳转先恢复可用，
   再让用户去开安全组。
 - **`nginx -t` 报找不到 `/etc/letsencrypt/options-ssl-nginx.conf`**：那个文件由

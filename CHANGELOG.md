@@ -25,7 +25,8 @@ HAO 不是命令行工具，是一套**给 AI agent 用的部署知识**：
   `snippets/redirect-to-https.conf`）或一个词。
 - `scripts/` —— 只有三件事保持确定性，因为即兴发挥会破坏某个保证：
   `hao-secret.sh`（凭据生成/复用/注入，值不进对话、不进 argv）、
-  `hao-state.sh`（状态与交接契约）、`hao-guard.sh`（覆盖前的只读归属判断）。
+  `hao-state.sh`（状态与交接契约，含 `amend` / `orphans` 两条给"记录不可信"
+  兜底的子命令）、`hao-guard.sh`（覆盖前的只读归属判断）。
 
 安装：
 

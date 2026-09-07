@@ -10,8 +10,12 @@ HAO 没有"一键卸载全部"，也不该有。
 ```bash
 "$SKILL/scripts/hao-state.sh" services
 "$SKILL/scripts/hao-state.sh" credentials
+"$SKILL/scripts/hao-state.sh" orphans        # HAO 写过却没记录的文件，删之前一起看
 cat /var/lib/hao/manifest.json
 ```
+
+`orphans` 在这里不是可选项：清单里没有的文件，删服务时不会被带走，会留在
+`/etc/nginx`、`/usr/local/bin` 这些目录里变成无主残留。
 
 把清单里对应服务的资源路径念给用户听，确认哪些要删、哪些要留。
 `shared` 和 `observed` 的资源**不要删**——它们不属于 HAO。

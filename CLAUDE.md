@@ -108,7 +108,17 @@ follows a procedure in `references/` and the user has confirmed.
   - `hao-state.sh` — writes `/var/lib/hao` state, computes drift, generates
     `HANDOFF.md` and `DEPLOY-INTENT.md`, and writes marker-block conventions into
     detected AI-assistant instruction files. The next agent must be able to *trust*
-    this format.
+    this format. Three subcommands exist purely to make an *untrustworthy* record
+    fixable, because every one of them was needed on a real host: `amend
+    <svc> --result <word>` changes just the result word (using `record` for that
+    means retyping every resource path, and a typo silently drops one); `services`
+    flags results that aren't one of the five legal words (early versions wrote
+    `success`, and nothing would have surfaced it); `orphans` lists files carrying
+    the `# Managed by HAO` header that are in no `.resources` file — the header is
+    the hook that makes a skipped `record` detectable at all. What no subcommand
+    does is verify a service is *usable*: `record` only checks that the paths it was
+    given exist, so a host once carried `docker installed` with no docker binary.
+    That check belongs in the takeover procedure, not the script.
   - `hao-guard.sh` — read-only ownership checks before overwriting anything
     (`vhost-owner`, `managed-file`, `cert-issuer`, `repo-identity`, `port-free`,
     `unit-free`, `unit-port`, `os-supported`). `unit-free` exists because dropping the

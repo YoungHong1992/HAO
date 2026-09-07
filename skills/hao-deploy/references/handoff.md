@@ -90,6 +90,54 @@ vhost 在 `/etc/nginx`、单元文件在 `/etc/systemd/system`、apt 源在 `/et
 
 一律写 `installed` 会让下一个 agent 无法判断这台机器上次到底发生了什么。
 
+### `result` 写错了怎么改：`amend`，不要重跑 `record`
+
+```bash
+"$SKILL/scripts/hao-state.sh" amend <service> --result <合法词>
+```
+
+`record` 是**整体替换**，所以拿它去改一个词，就必须把该服务的全部资源重新列一遍
+——少列一个就静默丢掉一个资源。而"改 result"这件事最常发生在接手一台旧机器、
+发现存量记录里有非法值的时候，那时资源清单恰好是唯一的事实来源，最不该重打一遍。
+`amend` 只改那一个词，资源与哈希原样保留，`recorded_at` 也不动（哈希是那个时刻算
+的，改一个词不该让它看起来像刚重新采集过）。
+
+`services` 会自动点出 result 不合法的记录（早期版本写过 `success` 这类词），
+并直接给出对应的 `amend` 命令。**读到非法 result 就意味着这条记录不可信**，
+先修正再据它做判断。
+
+### `installed` 不等于"真的能用"：接手时要抽查一次
+
+`record` 只检查它**列出的资源路径**是否存在，没有"这个服务本身可用吗"的概念。
+真实踩过的坑：某台机器的记录写着 `docker installed`，而机器上既没有 docker 二进制、
+也没有对应的 unit——那条记录的资源只有一个 `daemon.json`，文件确实在，于是记录
+"看起来"是自洽的。下一个 agent 读到它就会以为能用 docker。
+
+所以接手时对每个 `installed` / `updated` 的服务抽查一次，命令按服务性质选：
+
+```bash
+command -v docker nginx node uv gh git certbot 2>/dev/null   # 该有的二进制在不在
+systemctl is-active nginx fail2ban 2>/dev/null               # 该跑的服务在不在跑
+```
+
+对不上就**先把记录改成实情**（`amend` 成 `skipped` 或 `failed`），再告诉用户，
+不要带着一条已知不实的记录继续往下做。
+
+### 漏跑 `record` 的反查：`orphans`
+
+```bash
+"$SKILL/scripts/hao-state.sh" orphans          # 也可以 orphans <目录>... 指定范围
+```
+
+漏跑一次 `record` 的后果是**静默**的：文件在主机上、`# Managed by HAO` 归属头也在，
+但 `drift` 不看它、`manifest.json` 里没有它、卸载流程也不会带走它。归属头正是反查
+这类漏记的钩子——`hao-guard.sh` 靠它判归属，`orphans` 靠它对账，扫的是 HAO 可能
+写入的那几个目录（`/etc/nginx`、`/etc/apt`、`/etc/systemd/system`、`/usr/local/bin`…）。
+
+列出来的每一个，要么补进对应服务的 `record`（记得把该服务原有的资源一起列上），
+要么确认可以删。`*.bak.*` / `*.disabled` 会被单独标注：那通常是回滚备份或停用件，
+确认线上配置无误后可以删。
+
 ### `record` 只记录**当时真的存在**的路径
 
 不存在的路径会被静默丢掉，并在输出里打一行 `跳过不存在的路径: …`。
@@ -173,10 +221,20 @@ runtime 的位置不在检测范围内时用 `--agent-file PATH`（可重复）�
 
 ```bash
 cat /var/lib/hao/HANDOFF.md                      # 先读这个
-"$SKILL/scripts/hao-state.sh" services           # 装了什么
+"$SKILL/scripts/hao-state.sh" services           # 装了什么（顺带点出不合法的 result）
 "$SKILL/scripts/hao-state.sh" drift              # 有没有被手工改过
+"$SKILL/scripts/hao-state.sh" orphans            # 有没有 HAO 写过却没记录的文件
 "$SKILL/scripts/hao-state.sh" credentials        # 凭据在哪（只有路径）
 ```
+
+这四条覆盖的是四种不同的不一致，缺一条就会漏掉一类：
+
+| 命令 | 回答的问题 | 不一致的表现 |
+|---|---|---|
+| `services` | 记录本身可不可信 | result 是早期版本写的非法词 |
+| `drift` | 记录里的文件被改过没有 | managed 资源哈希不符 |
+| `orphans` | 有没有该记而没记的文件 | 带归属头却不在任何记录里 |
+| 抽查 `command -v` / `is-active` | 记录说装了的东西真的在吗 | 幻影服务（见上一节） |
 
 `drift` 报告了 managed 资源变化，说明**有人手工改过 HAO 管理的文件**。
 停下来把差异讲给用户听，让用户决定是保留手工改动还是按 HAO 流程重写。

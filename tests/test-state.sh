@@ -280,5 +280,92 @@ else
     note "拒绝非法 marker"
 fi
 
+# ---------- amend：只改 result，不能弄丢资源 ----------
+# 存量记录里出现过更早版本写下的非法 result（例如 "success"）。修它过去只能把全部
+# 资源重新列一遍 record，少列一个就静默丢掉一个资源 —— 而这个操作恰好最常发生在
+# 接手旧机器的时候，那时资源清单是唯一的事实来源。
+"$STATE" record amendsvc installed managed:"$WORK/res/site-blog.conf" observed:"$WORK/res" >/dev/null
+sed -i 's/"result": "installed"/"result": "success"/' "$HAO_STATE_DIR/services/amendsvc.json"
+
+svc_out="$("$STATE" services)"
+printf '%s' "$svc_out" | grep -q '记录异常' \
+    && note "services 点出了非法的 result" || bad "services 没有发现非法的 result"
+printf '%s' "$svc_out" | grep -q 'amend amendsvc --result' \
+    && note "services 给出了修正命令" || bad "services 没给出修正办法"
+
+before_res="$(cat "$HAO_STATE_DIR/services/amendsvc.resources")"
+"$STATE" amend amendsvc --result updated >/dev/null
+python3 - "$HAO_STATE_DIR/services/amendsvc.json" <<'PY' || fail=1
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+assert d["result"] == "updated", f'result 没改成 updated: {d["result"]}'
+assert len(d["resources"]) == 2, f'amend 弄丢了资源: {d["resources"]}'
+print("ok   amend 改了 result 且资源数不变")
+PY
+[ "$(cat "$HAO_STATE_DIR/services/amendsvc.resources")" = "$before_res" ] \
+    && note "amend 没有动 .resources 文件" || bad "amend 改写了 .resources"
+"$STATE" services | grep -q '记录异常' \
+    && bad "amend 之后仍报记录异常" || note "amend 之后记录异常消失"
+
+for bad_case in "amend amendsvc --result bogus" "amend nosuchsvc --result installed" "amend amendsvc"; do
+    # shellcheck disable=SC2086  # 有意做词分割：这里就是要把一整条命令行拆成参数
+    if "$STATE" $bad_case >/dev/null 2>&1; then
+        bad "amend 未拒绝: $bad_case"
+    else
+        note "amend 拒绝: $bad_case"
+    fi
+done
+
+# ---------- orphans：带归属头却没被记录的文件 ----------
+# 漏跑一次 record 的后果是静默的：文件在主机上、归属头也在，但 drift 不看它、
+# manifest 里没有它、卸载也不会带走它。归属头正是反查这类漏记的钩子。
+ORPH="$WORK/orph"
+mkdir -p "$ORPH/sub"
+printf '# Managed by HAO\n# Service: amendsvc\nx=1\n' > "$ORPH/tracked.conf"
+printf '# Managed by HAO\n# Service: ghostsvc\ny=2\n' > "$ORPH/sub/untracked.conf"
+printf '# Managed by HAO\n# Service: amendsvc\nz=3\n' > "$ORPH/sub/old.conf.bak.20260101_000000"
+printf 'not ours at all\n' > "$ORPH/sub/foreign.conf"
+"$STATE" record amendsvc updated managed:"$ORPH/tracked.conf" >/dev/null
+
+orph_out="$("$STATE" orphans "$ORPH")"
+printf '%s' "$orph_out" | grep -qF "$ORPH/sub/untracked.conf" \
+    && note "orphans 找出了没被记录的 HAO 文件" || bad "orphans 漏了没被记录的文件"
+printf '%s' "$orph_out" | grep -qF "$ORPH/tracked.conf" \
+    && bad "orphans 把已记录的文件也列了出来" || note "orphans 不列已记录的文件"
+printf '%s' "$orph_out" | grep -qF "$ORPH/sub/foreign.conf" \
+    && bad "orphans 列了不带归属头的文件" || note "orphans 只看带归属头的文件"
+printf '%s' "$orph_out" | grep -q '备份/停用件' \
+    && note "orphans 把 .bak 标注成可清理" || bad "orphans 没有标注备份件"
+
+"$STATE" record amendsvc updated managed:"$ORPH/tracked.conf" \
+    managed:"$ORPH/sub/untracked.conf" managed:"$ORPH/sub/old.conf.bak.20260101_000000" >/dev/null
+"$STATE" orphans "$ORPH" | grep -q '（无' \
+    && note "全部补记之后 orphans 为空" || bad "补记之后 orphans 仍有输出"
+
+# 记录条数多的时候也必须准。
+# 回归测试：orphans 曾经用 `printf '%s\n' "$recorded" | grep -qxF "$f"` 做比对。
+# grep -q 一命中就立刻退出，左边的 printf 还在写就收到 EPIPE，而 set -o pipefail
+# 会把整条管道判为失败 —— 判断结果被反转，**已经记录过的文件被报成"没记录"**。
+# 它只在 recorded 列表大于一个 stdio 缓冲区时才发作：几条路径永远看不到，
+# 一台装了十几个服务的真机（每个服务十来个资源）就够了。所以这里故意堆到 ~25 KB。
+# 数字选 300 是因为它在旧写法下稳定复现（实测误报十几条），而新写法是纯 bash
+# 匹配、不起子进程、没有管道，恒定为 0。
+MANY="$WORK/many"
+mkdir -p "$MANY"
+many_args=()
+for i in $(seq 1 300); do
+    f="$MANY/long-enough-name-to-push-the-recorded-list-past-one-stdio-buffer-$i.conf"
+    printf '# Managed by HAO\n# Service: manysvc\nn=%s\n' "$i" > "$f"
+    many_args+=("managed:$f")
+done
+"$STATE" record manysvc installed "${many_args[@]}" >/dev/null
+many_out="$("$STATE" orphans "$MANY")"
+many_false="$(printf '%s' "$many_out" | grep -c "^  $MANY/" || true)"
+if [ "$many_false" -eq 0 ]; then
+    note "记录条数多时 orphans 仍然准（不受 EPIPE / pipefail 影响）"
+else
+    bad "orphans 把 $many_false 个已记录的文件误报成 orphan（EPIPE 回归）"
+fi
+
 [ "$fail" -eq 0 ] || { echo "hao-state 测试失败" >&2; exit 1; }
 echo "hao-state 测试通过"
