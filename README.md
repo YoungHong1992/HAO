@@ -11,20 +11,38 @@ HAO（HongAgentOps）不是命令行工具，是一套**给 AI agent 用的部�
 
 ## 安装
 
-在**目标服务器上**安装（不是你的笔记本）：
+在**目标服务器上**安装（不是你的笔记本）。刚买的机器上完整是这三步：
+
+**1. ssh 上去，装 Claude Code**（这一步没人能替你做，之后才有 `/plugin` 可用）：
+
+```bash
+ssh <你的用户>@<服务器IP>
+
+# Node.js 18+（Debian/Ubuntu 自带的可能太旧，用 NodeSource）
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+sudo npm install -g @anthropic-ai/claude-code
+claude          # 首次运行会让你登录
+```
+
+**2. 装 HAO**（在 `claude` 里敲这两条）：
 
 ```
 /plugin marketplace add YoungHong1992/HAO
-/plugin install hao-deploy@hao
+/plugin install hao@hao
 ```
 
-然后直接说你要什么：
+**3. 直接说你要什么**：
 
 > 帮我把 github.com/me/blog 这个仓库部署到 blog.example.com
 
 > 服务器刚买的，先弄安全一点
 
 > 这台机器上装了什么？
+
+之后这台机器上再要装别的（Node、Docker、uv…）就都由 agent 来做了，
+第 1 步只有第一台机器需要手工。
 
 ## 为什么必须在服务器上运行
 

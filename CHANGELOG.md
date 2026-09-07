@@ -43,6 +43,29 @@ HAO 通过插件市场分发（`.claude-plugin/marketplace.json`）。
 `<!-- HAO-GIT-GITHUB -->` 那个块不会被 `convention HAO-GH` 替换，会**多出一个块**，
 需要手工删掉旧的。同样写在 `handoff.md` 里。
 
+### 破坏性变更：插件安装名统一成 `hao`
+
+对外露出来的名字原来是四个并存：市场叫 `hao`、市场里的插件条目叫 `hao-deploy`、
+`plugin.json` 里写的是 `hao`、skill 叫 `hao-deploy`，于是用户敲的是
+`/plugin install hao-deploy@hao` 这么一个四不像。
+
+现在插件名就是产品名：
+
+```
+/plugin install hao@hao          # 原 hao-deploy@hao
+```
+
+**skill 仍叫 `hao-deploy`**，目录也还是 `skills/hao-deploy/`：插件是产品、skill 是
+能力，以后再加第二个 skill（备份、监控之类）时这个分工才立得住。
+
+已经装过旧名字的机器要重装一次（插件名写在用户的 `settings.json` 的
+`enabledPlugins` 里，改名后旧条目不会自动跟着改）：
+
+```
+/plugin uninstall hao-deploy@hao
+/plugin install hao@hao
+```
+
 ### 拆分时补上的东西
 
 - `swap.md` 说明了为什么 swap 文件本身不进状态记录：`drift` 对记录里每个路径算
