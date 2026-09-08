@@ -95,8 +95,13 @@ render site-body-node.conf "$WORK/conf/snippets/node.$DOMAIN.conf" \
 # 日志路径改到临时目录
 sed -i "s#/var/log/nginx#$WORK/logs#g" \
     "$WORK/conf/snippets/$DOMAIN.conf" "$WORK/conf/snippets/node.$DOMAIN.conf"
-# 片段里的 include 也要指到临时 snippets 目录
-fix_includes() { sed -i "s#/etc/nginx/snippets#$WORK/conf/snippets#g" "$1"; }
+# 片段和 vhost 里的 include 都要指到临时 snippets 目录 —— **内容块也不例外**。
+# body 里的 glob include 是绝对路径（/etc/nginx/snippets/...），不改写的话，
+# 在真的部署过 nginx-hardening 的机器上（CI 之外还包括开发机本机），
+# 测试会把宿主机的线上配置吸进来 —— "模板正确性"就变成了"宿主机配置正确性"，
+# 两个方向都会被污染。
+fix_includes() { sed -i "s#/etc/nginx/snippets#$WORK/conf/snippets#g" "$@"; }
+fix_includes "$WORK/conf/snippets/$DOMAIN.conf" "$WORK/conf/snippets/node.$DOMAIN.conf"
 
 # ---------- vhost：HTTP 版（无域名默认站点，带 default_server）----------
 render site-vhost-http.conf "$WORK/conf/conf.d/$SITE_ID.conf" \
@@ -144,9 +149,24 @@ fi
 # -e 不可省：nginx 在解析配置**之前**就打开编译进去的默认 error log 路径，
 # 非 root 跑会先来一句 permission denied。
 if out="$(nginx -t -p "$WORK" -c "$WORK/conf/nginx.conf" -e "$WORK/logs/startup-error.log" 2>&1)"; then
-    note "nginx -t 通过（主配置 + 共享片段 + static/node 两份 vhost）"
+    note "nginx -t 通过（主配置 + 共享片段 + static/node 两份 vhost，未装 hardening，glob 为空操作）"
 else
     bad "nginx -t 未通过:"
+    printf '%s\n' "$out" >&2
+fi
+
+# ---------- hardening 场景：装上 nginx-hardening 三件套，再 -t 一次 ----------
+# 上面那次 -t 验证的是"没装 hardening 时，内容块的 glob include 是无害空操作"；
+# 这一次验证"装了就自动生效"。文件用模块部署时的真名真位置 ——
+# conf.d 里的 00- 前缀必须先于 vhost 解析（zone 定义先于引用），
+# 见 templates/nginx-hardening-baseline.conf 的头部说明。
+cp "$TMPL/nginx-hardening-baseline.conf" "$WORK/conf/conf.d/00-hao-hardening.conf"
+cp "$TMPL/nginx-scanner-blocks.conf" "$WORK/conf/snippets/scanner-blocks.conf"
+cp "$TMPL/nginx-security-headers.conf" "$WORK/conf/snippets/security-headers.conf"
+if out="$(nginx -t -p "$WORK" -c "$WORK/conf/nginx.conf" -e "$WORK/logs/startup-error.log" 2>&1)"; then
+    note "nginx -t 也通过（装上 hardening 三件套，限流/扫站拦截/安全响应头随 glob 生效）"
+else
+    bad "hardening 场景 nginx -t 未通过:"
     printf '%s\n' "$out" >&2
 fi
 

@@ -35,10 +35,10 @@ HAO 不是命令行工具，是一套**给 AI agent 用的部署知识**：
 /plugin install hao@hao
 ```
 
-### 11 个模块，一个工具一个模块
+### 13 个模块，一个工具一个模块
 
 `fail2ban`、`swap`、`journald`、`nginx`、`docker`、`node`、`uv`、`claude-code`、
-`git`、`gh`、`site`。
+`git`、`gh`、`site`、`nginx-hardening`、`fail2ban-nginx`。
 
 捆绑关系放在 `SKILL.md` 的意图映射表里，不放进 reference：用户说"服务器刚买来先弄
 安全点"，agent 一次装齐 `fail2ban` + `swap` + `journald`，但三者各记一条状态、

@@ -458,6 +458,14 @@ TLS、访问控制、限流全都被跳过，此时唯一挡着的是云安全�
 `$ID`→`@@SITE_ID@@`、`$ENTRY`→`@@START_FILE@@`、`$OUTPUT`→`@@OUTPUT_DIR@@`、
 `$TARGET_USER`/`$TARGET_GROUP`/`$TARGET_HOME`→同名 token。
 
+内容块模板里的两行 glob include（`scanner-blocks*.conf` /
+`security-headers*.conf`）属于 `nginx-hardening` 模块：装了就自动生效，
+没装就是无匹配的空操作。**照模板原样保留，不要因为"机器上没这个文件"
+删掉**——删了，之后装 hardening 时这个站点不会自动受保护，得手工补
+（步骤见 `references/nginx-hardening.md` 第 3 节）。同理，装了
+`fail2ban-nginx` 的机器，新站点部署完要 `fail2ban-client reload` 一次，
+jail 的 logpath glob 才会跟上新日志文件。
+
 ### 先探测这台机器上的 nginx 能力（决定三个占位符怎么填）
 
 **不要假设 nginx 是本 skill 从 nginx.org 装的那个。** 第 1 节明确支持"机器上原先

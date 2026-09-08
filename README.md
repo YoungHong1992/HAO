@@ -73,6 +73,8 @@ Claude Code。在笔记本上跑这套流程只会把笔记本改坏。
 | `git` | Git + 提交身份（身份必须你自己给，不会替你猜） |
 | `gh` | 官方 GitHub CLI + 独立的授权助手 |
 | `site` | 从 Git 仓库部署静态站或 Node 站，含 Let's Encrypt 证书与更新脚本 |
+| `nginx-hardening` | 站点防护基线：真实 IP 还原、扫站/恶意 UA 拦截、限流、安全响应头 |
+| `fail2ban-nginx` | 站点扫站（403/404/429）与后台爆破（401）的自动封禁 |
 
 **一个工具一个模块。** 你说「服务器刚买的，先弄安全一点」，agent 会装
 `fail2ban` + `swap` + `journald` 三件——但它们各自独立记录、独立检查漂移、

@@ -1,0 +1,55 @@
+# Managed by HAO
+# Service: fail2ban-nginx
+# 目标路径: /etc/fail2ban/jail.d/hao-nginx.local
+#
+# 占位符：无。
+#
+# backend = auto 必须显式写。Debian/Ubuntu 的 fail2ban 在 defaults-debian.conf
+# 里把 [DEFAULT] backend 设成了 systemd（读 journal），而 nginx 的访问日志在
+# 文件里 —— 不覆盖的话 jail 装上了也一个 IP 都匹配不到，还不报任何错。
+# （hao-sshd.local 用 systemd 是同一个原因的反向：sshd 只写 journal。）
+#
+# logpath 用 glob 是刻意的：站点会陆续增加，逐个列文件迟早漂移。glob 在
+# fail2ban 启动/reload 时解析一次，**之后新建的日志文件不会自动跟进** ——
+# 所以每部署一个新站点，要 fail2ban-client reload 一次（references/site.md
+# 的收尾会提醒）。
+#
+# 封禁效果的诚实预期（三层各管一段）：
+#   - 直连源站的扫描器：nftables 直接封掉，立竿见影（实测真实存在的攻击：
+#     单 IP 一分钟 370 次）。
+#   - 经 Cloudflare 代理的攻击者：真实 IP 不直接连源站，socket 级封禁对这类
+#     流量无效 —— 那部分靠 nginx 按真实 IP 限流压制 + 用户在 CF 边缘配
+#     WAF/质询规则（references/nginx-hardening.md 的附录）。
+
+[hao-nginx-scan]
+enabled  = true
+backend  = auto
+port     = http,https
+filter   = hao-nginx-scan
+# 本机监控/健康检查的 404 不算数，防止自己封自己
+ignoreip = 127.0.0.1/8 ::1
+logpath  = /var/log/nginx/*access.log
+# 60 秒内 15 次 403/404/429：正常访客点错几个链接远到不了这个量，
+# 扫描器动辄一分钟上百次。
+maxretry = 15
+findtime = 60
+bantime  = 86400
+bantime.increment = true
+bantime.factor = 2
+banaction = nftables
+
+[hao-nginx-auth]
+enabled  = true
+backend  = auto
+port     = http,https
+filter   = hao-nginx-auth
+ignoreip = 127.0.0.1/8 ::1
+logpath  = /var/log/nginx/*access.log
+# 10 分钟内 8 次认证失败。装了后台 Basic Auth 网关的机器上，401 只可能是
+# 口令错误；没装的话这个 jail 空转（无害）。
+maxretry = 8
+findtime = 600
+bantime  = 86400
+bantime.increment = true
+bantime.factor = 2
+banaction = nftables
