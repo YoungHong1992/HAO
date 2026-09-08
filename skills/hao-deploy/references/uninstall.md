@@ -86,8 +86,42 @@ certbot delete --cert-name <域名>     # 确认后再删
   和证书续期钩子 `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh`
   （钩子是 nginx 模块装的；删了它以后证书续期后不会重载 Nginx，
   站点会在续期后继续用旧证书直到下次重启）。
+  同目录下的 `scanner-blocks.conf` / `security-headers.conf` **不属于本模块**，
+  是 `nginx-hardening` 的，见下一条。
   安装时如果把包自带的 `conf.d/default.conf` 改名成了 `.disabled`，
   要不要改回来问用户 —— 那是 nginx 包的欢迎页，多数人并不想要它回来。
+- **nginx-hardening**：顺序有讲究，**先改引用、再删被引用的文件**。
+  ```bash
+  # 1. 先从每个站点的内容块里删掉那两行 glob include，以及（如果加过）
+  #    整段后台 Basic Auth 网关 location —— auth_basic_user_file 还指着
+  #    htpasswd 时就把 htpasswd 删了，后台每个请求都是 500。
+  grep -rln 'scanner-blocks\*\.conf\|htpasswd-' /etc/nginx/snippets/
+  # 2. 编辑上面列出的文件，删掉那些行/那一段
+  nginx -t && systemctl reload nginx
+  # 3. 确认没有引用了，再删本模块的文件
+  rm -f /etc/nginx/conf.d/00-hao-hardening.conf \
+        /etc/nginx/snippets/scanner-blocks.conf \
+        /etc/nginx/snippets/security-headers.conf
+  rm -f /etc/nginx/.htpasswd-<CONF_NAME>          # 后台口令，装过网关才有
+  rm -f /etc/hao/nginx-hardening.env              # 同上，凭据文件
+  nginx -t && systemctl reload nginx
+  ```
+  被改过内容块的每个站点都要**重跑它自己的 record**（清单从
+  `/var/lib/hao/services/site-<ID>.resources` 读，别凭记忆敲），否则 drift
+  会一直报这些站点的哈希不对。
+  删完要如实告诉用户：扫站拦截、限流、安全响应头都没了。
+- **fail2ban-nginx**：删 jail 之后**必须 reload**，否则 fail2ban 继续按内存里
+  的配置封人，而机器上已经找不到这套规则的来源了。
+  ```bash
+  fail2ban-client status hao-nginx-scan   # 先看看有没有还在封着的 IP
+  rm -f /etc/fail2ban/jail.d/hao-nginx.local \
+        /etc/fail2ban/filter.d/hao-nginx-scan.conf
+  fail2ban-client reload                  # 不做这一步等于没删
+  fail2ban-client status | grep -c hao-nginx || echo "两个 jail 都没了"
+  ```
+  `/etc/fail2ban/filter.d/nginx-http-auth.conf` 是 fail2ban 包自带的，
+  auth jail 只是引用它，**不要删**。sshd jail（`hao-sshd.local`）属于
+  `fail2ban` 模块，是另一条。
 - **docker**：`systemctl disable --now docker` 并按需卸包。
   **注意**：这会影响这台机器上所有容器，不只是 HAO 部署的。日志轮转那部分是
   `daemon.json` 里的 `log-driver` / `log-opts` 两个键，`shared` 资源，

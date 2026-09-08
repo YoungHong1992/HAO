@@ -462,9 +462,8 @@ TLS、访问控制、限流全都被跳过，此时唯一挡着的是云安全�
 `security-headers*.conf`）属于 `nginx-hardening` 模块：装了就自动生效，
 没装就是无匹配的空操作。**照模板原样保留，不要因为"机器上没这个文件"
 删掉**——删了，之后装 hardening 时这个站点不会自动受保护，得手工补
-（步骤见 `references/nginx-hardening.md` 第 3 节）。同理，装了
-`fail2ban-nginx` 的机器，新站点部署完要 `fail2ban-client reload` 一次，
-jail 的 logpath glob 才会跟上新日志文件。
+（步骤见 `references/nginx-hardening.md` 第 3 节）。装了 `fail2ban-nginx`
+的机器还要在收尾 `fail2ban-client reload` 一次，那一步在第 6 节。
 
 ### 先探测这台机器上的 nginx 能力（决定三个占位符怎么填）
 
@@ -851,6 +850,23 @@ key 名**含有** `password`/`passwd`/`token`/`secret`/`apikey`/`api_key`/`crede
 key 还必须**以小写字母开头**，只含小写字母、数字、下划线。
 `build_cmd` 两种类型都要记（node 的是装依赖那条命令，重放时缺了它站点起不来），
 static 不填 `entry`，node 不填 `output_dir`，留空即可。
+
+### 装了 fail2ban-nginx 的机器：reload 一次
+
+```bash
+[ -f /etc/fail2ban/jail.d/hao-nginx.local ] && fail2ban-client reload
+```
+
+jail 的 `logpath` 是 glob，**只在 fail2ban 启动/reload 时展开一次**。不 reload
+的话，这个新站点的 `access.log` / `error.log` 对两个 jail 都是隐形的——站点看着
+一切正常，防扫站却完全没覆盖到它，而且没有任何报错提示。`fail2ban-nginx.md`
+把这一步称作"最容易被漏的一步"，所以它在这里，紧挨着 `record`。
+
+reload 之后确认新日志真的进了 jail 的跟踪清单：
+
+```bash
+fail2ban-client status hao-nginx-scan | grep -A2 'File list'
+```
 
 ## 7. 汇报给用户
 

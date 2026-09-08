@@ -106,7 +106,7 @@ reference。**不要替用户猜域名、Git 身份、仓库地址这类东西�
 | `gh` | `references/gh.md` | GitHub CLI + 授权助手 + gh 操作约定 |
 | `site` | `references/site.md` | 从 Git 仓库部署静态站或 Node 站，含证书 |
 | `nginx-hardening` | `references/nginx-hardening.md` | 站点防护基线：真实 IP 还原、扫站/恶意 UA 拦截、限流、安全响应头 |
-| `fail2ban-nginx` | `references/fail2ban-nginx.md` | 站点扫站（403/404/429）与后台爆破（401）的自动封禁 |
+| `fail2ban-nginx` | `references/fail2ban-nginx.md` | 站点扫站（403/404）与后台爆破的自动封禁 |
 
 **一个工具一个模块。** 用户要的往往是好几个（意图表就是干这个的），但每个模块
 自己是独立的：独立安装、独立 `record`、独立 drift、独立卸载。装三件加固时其中

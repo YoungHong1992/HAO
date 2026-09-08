@@ -148,11 +148,32 @@ fi
 # ---------- 真的跑一次 nginx -t ----------
 # -e 不可省：nginx 在解析配置**之前**就打开编译进去的默认 error log 路径，
 # 非 root 跑会先来一句 permission denied。
-if out="$(nginx -t -p "$WORK" -c "$WORK/conf/nginx.conf" -e "$WORK/logs/startup-error.log" 2>&1)"; then
+NGX=(nginx -p "$WORK" -c "$WORK/conf/nginx.conf" -e "$WORK/logs/startup-error.log")
+if out="$("${NGX[@]}" -t 2>&1)"; then
     note "nginx -t 通过（主配置 + 共享片段 + static/node 两份 vhost，未装 hardening，glob 为空操作）"
 else
     bad "nginx -t 未通过:"
     printf '%s\n' "$out" >&2
+fi
+
+# 未装 hardening 时 glob **确实**没有引入任何东西。少了这条反向断言，
+# 下面那条正向断言就分不清"glob 生效了"和"文件本来就一直在"。
+#
+# 断言一律用 `dump_has`（bash 字面子串判断），**不要写
+# `nginx -T | grep -q`**：本文件开头是 `set -o pipefail`，而 `grep -q` 一匹配
+# 就退出并关掉管道，左边的写入方随即吃到 SIGPIPE(141)，pipefail 把整条管道
+# 判成失败 —— 于是"匹配到了"被读成"没匹配到"。命中位置越靠前越容易触发
+# （dump 越长、写入方剩得越多），实测同一份 25760 字节的 dump 在同一台机器上
+# 时对时错。正向断言会假报错，**反向断言会静默假通过**，后者更危险。
+dump_has() {   # dump_has <dump> <字面子串>
+    case "$1" in (*"$2"*) return 0 ;; (*) return 1 ;; esac
+}
+
+plain_dump="$("${NGX[@]}" -T 2>/dev/null)"
+if dump_has "$plain_dump" 'zone=perip_general'; then
+    bad "未装 hardening 时配置里就出现了 perip_general —— glob 吸到了临时目录之外的东西"
+else
+    note "未装 hardening 时配置里没有 hardening 的任何指令（glob 真的是空操作）"
 fi
 
 # ---------- hardening 场景：装上 nginx-hardening 三件套，再 -t 一次 ----------
@@ -163,12 +184,47 @@ fi
 cp "$TMPL/nginx-hardening-baseline.conf" "$WORK/conf/conf.d/00-hao-hardening.conf"
 cp "$TMPL/nginx-scanner-blocks.conf" "$WORK/conf/snippets/scanner-blocks.conf"
 cp "$TMPL/nginx-security-headers.conf" "$WORK/conf/snippets/security-headers.conf"
-if out="$(nginx -t -p "$WORK" -c "$WORK/conf/nginx.conf" -e "$WORK/logs/startup-error.log" 2>&1)"; then
+if out="$("${NGX[@]}" -t 2>&1)"; then
     note "nginx -t 也通过（装上 hardening 三件套，限流/扫站拦截/安全响应头随 glob 生效）"
 else
     bad "hardening 场景 nginx -t 未通过:"
     printf '%s\n' "$out" >&2
 fi
+
+# `-t` 通过**不能**说明 glob include 真的把文件接进来了：把两行 include 从 body
+# 模板里删掉、或者把 hardening 文件改个名，`-t` 一样是绿的。用 `-T` 看最终生效
+# 的配置里有没有那些指令才是断言。references/nginx-hardening.md 把改名列为
+# "全站断线"级的回归，这里就是守它的地方。
+hardening_dump="$("${NGX[@]}" -T 2>/dev/null)"
+for needle in 'zone=perip_general' '$bad_ua' 'X-Content-Type-Options'; do
+    if dump_has "$hardening_dump" "$needle"; then
+        note "hardening 经 glob 真的进了最终配置: $needle"
+    else
+        bad "装了 hardening 但最终配置里找不到 $needle —— body 模板的 glob include 或文件名对不上了"
+    fi
+done
+
+# ---------- 后台 Basic Auth 网关：渲染进 node 内容块再 -t ----------
+# 这个模板此前没有任何 nginx -t 覆盖，而它整段是 nginx 语法（^~ 前缀、
+# proxy_set_header、限流引用 perip_admin zone）。htpasswd 文件要真的存在：
+# nginx -t 会去 open() auth_basic_user_file。
+printf 'admin:{PLAIN}notarealpassword\n' > "$WORK/conf/.htpasswd-node.$DOMAIN"
+render nginx-admin-gateway.conf "$WORK/gateway.conf" \
+    "ADMIN_PATH=/_gate-7x2k" "UPSTREAM=127.0.0.1:8123" "CONF_NAME=node.$DOMAIN"
+sed -i "s#/etc/nginx/.htpasswd-#$WORK/conf/.htpasswd-#" "$WORK/gateway.conf"
+cat "$WORK/gateway.conf" >> "$WORK/conf/snippets/node.$DOMAIN.conf"
+if out="$("${NGX[@]}" -t 2>&1)"; then
+    note "nginx -t 也通过（后台 Basic Auth 网关渲染进 node 内容块）"
+else
+    bad "admin 网关场景 nginx -t 未通过:"
+    printf '%s\n' "$out" >&2
+fi
+
+# 网关必须是 `^~` 前缀：普通前缀 location 输给正则 location，而 static/node
+# 内容块里有静态资源正则 —— 后台的 .js/.css 会绕过 auth_basic。
+grep -q 'location \^~ @@ADMIN_PATH@@/' "$TMPL/nginx-admin-gateway.conf" \
+    && note "admin 网关用了 ^~（后台静态资源不会被正则 location 抢走）" \
+    || bad "admin 网关不是 ^~ 前缀，/<admin>/app.js 会被静态资源正则接走且不过 auth_basic"
 
 # ---------- 顺带守住几条内容约定 ----------
 # 静态资源那个 location 里不能有 add_header：nginx 的 add_header 不累加，
