@@ -69,6 +69,7 @@ reference。**不要替用户猜域名、Git 身份、仓库地址这类东西�
 ```bash
 "$SKILL/scripts/hao-state.sh" services     # 这台机器已经装了什么
 "$SKILL/scripts/hao-state.sh" drift        # 有没有被手工改过（只查 managed 资源）
+"$SKILL/scripts/hao-state.sh" orphans      # 有没有 HAO 写过却没记录的文件
 "$SKILL/scripts/hao-guard.sh" ...          # 目标资源归属，见各 reference
 ```
 
@@ -77,7 +78,9 @@ reference。**不要替用户猜域名、Git 身份、仓库地址这类东西�
 文件没被动过"，不等于"这台机器没被动过"。
 
 如果 `services` 显示这台机器已经被 HAO 管理过，先读
-`/var/lib/hao/HANDOFF.md`，再看 `references/handoff.md` 的接手流程。
+`/var/lib/hao/HANDOFF.md`，再看 `references/handoff.md` 的接手流程。那里有四条
+互不重叠的对账（记录可信吗 / 文件被改过吗 / 有没有漏记 / 记录说装了的真的在吗）——
+**`installed` 不等于真的能用**，`record` 只检查它列出的路径存在，不检查服务本身。
 
 ### 3. 讲清楚，然后拿到确认
 

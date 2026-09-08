@@ -20,13 +20,22 @@
 #
 # 用法:
 #   hao-state.sh record <service> <result> OWNERSHIP:PATH [...]
+#   hao-state.sh amend <service> --result <result>
 #   hao-state.sh intent <service> key=value [...]
 #   hao-state.sh drift
+#   hao-state.sh orphans [DIR...]
 #   hao-state.sh ownership <service>
 #   hao-state.sh services
 #   hao-state.sh credentials
 #   hao-state.sh handoff [--user USER] [--agent-file PATH]... [--skip-agent-files]
 #   hao-state.sh convention <MARKER-ID> [--user USER] [--agent-file PATH]...  # 正文从 stdin
+#
+# RESULT 取值（只有这五个，amend 用来修正存量记录里的非法值）:
+#   installed 第一次装好
+#   updated   已经装过，这次重新部署或改了配置
+#   verified  只做了检查，没改任何东西
+#   failed    中途失败，机器处于半成品状态
+#   skipped   归属检查拦住了，或用户拒绝了
 #
 # OWNERSHIP 取值:
 #   managed   HAO 创建并负责的资源，漂移需要人工复核
@@ -35,6 +44,8 @@
 #   secret    凭据文件，只记录路径，哈希恒为 redacted
 
 set -euo pipefail
+
+HAO_RESULTS="installed updated verified failed skipped"
 
 HAO_STATE_DIR="${HAO_STATE_DIR:-/var/lib/hao}"
 HAO_RELEASE="${HAO_RELEASE:-skill}"
@@ -212,6 +223,128 @@ cmd_intent() {
     return 0
 }
 
+# result 是否合法。record 用它拦新记录，services 用它标出存量的非法值 ——
+# 两处必须是同一份清单，否则又会漂。
+hao_result_legal() {
+    local want="$1" r
+    for r in $HAO_RESULTS; do
+        [ "$want" = "$r" ] && return 0
+    done
+    return 1
+}
+
+# ==================== amend ====================
+# 只改一个已有记录的 result，资源清单与哈希原样保留。
+#
+# 为什么需要它：record 是整体替换，所以"把 result 从一个词改成另一个词"过去只能
+# 把全部资源重新列一遍 —— 少列一个就静默丢掉一个资源，而这个操作恰好最常发生在
+# 「接手一台旧机器、发现存量记录里有非法 result」的时候，那时资源清单是唯一的
+# 事实来源，最不该被手工重打一遍。
+#
+# recorded_at 不动：资源的哈希是那个时刻算的，改一个词不该让它看起来像刚重新采集过。
+cmd_amend() {
+    local service="${1:-}"
+    [ -n "$service" ] || die "amend 需要 <service> --result <result>"
+    shift
+    local result=""
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --result)
+                result="${2:-}"
+                [ -n "$result" ] || die "--result 需要一个取值（$HAO_RESULTS）"
+                shift 2
+                ;;
+            *) die "未知参数: $1（amend 只支持 --result）" ;;
+        esac
+    done
+    [ -n "$result" ] || die "amend 需要 --result <result>"
+    hao_result_legal "$result" || die "非法 result: $result（可用: $HAO_RESULTS）"
+
+    local state_file="$HAO_STATE_DIR/services/$service.json"
+    [ -f "$state_file" ] || die "没有 $service 的记录，amend 只能改已有记录。要新建用 record。"
+
+    local old_result tmp
+    old_result="$(sed -n 's/^[[:space:]]*"result": "\([^"]*\)",*$/\1/p' "$state_file" | head -1)"
+    if [ "$old_result" = "$result" ]; then
+        echo "$service 的 result 已经是 $result，没有改动。"
+        return 0
+    fi
+    tmp="$(mktemp "$HAO_STATE_DIR/services/.${service}.json.XXXXXX")"
+    sed 's|^\([[:space:]]*"result": "\)[^"]*\(",*\)$|\1'"$result"'\2|' "$state_file" > "$tmp"
+    # 改完必须真的变了，否则说明这份 json 的形状和预期不一致，宁可不动
+    if [ "$(sed -n 's/^[[:space:]]*"result": "\([^"]*\)",*$/\1/p' "$tmp" | head -1)" != "$result" ]; then
+        rm -f "$tmp"
+        die "改写 $state_file 的 result 失败（文件形状不符合预期），没有动它。"
+    fi
+    chmod 644 "$tmp"
+    mv "$tmp" "$state_file"
+    rebuild_manifest
+    echo "已把 $service 的 result 从 ${old_result:-（空）} 改为 $result"
+    echo "资源清单与哈希未变，recorded_at 保持原值。"
+    echo "别忘了在收尾时运行: hao-state.sh handoff"
+}
+
+# ==================== orphans ====================
+# 找出「带 HAO 归属头、但不在任何 services/*.resources 里」的文件。
+#
+# 为什么需要它：漏跑一次 record 的后果是静默的 —— 文件在主机上、归属头也在，
+# 但 drift 不看它、manifest 里没有它、卸载流程也不会带走它。反过来说，归属头正是
+# 反查这类漏记的钩子：hao-guard.sh 靠它判归属，这里靠它对账。
+# 接手一台别人（或以前的自己）部署过的机器时，这一条比什么都实用。
+#
+# 只扫 HAO 可能写入的目录，不扫整个文件系统 —— 后者慢，而且会撞上无关的副本。
+HAO_ORPHAN_DIRS_DEFAULT="/etc/nginx /etc/apt /etc/systemd/system /etc/fail2ban /etc/sysctl.d /etc/security /etc/letsencrypt/renewal-hooks /etc/docker /etc/hao /usr/local/bin"
+
+cmd_orphans() {
+    local -a dirs=()
+    if [ "$#" -gt 0 ]; then
+        dirs=("$@")
+    else
+        # shellcheck disable=SC2206  # 有意做词分割：这是一份空格分隔的目录清单
+        dirs=($HAO_ORPHAN_DIRS_DEFAULT)
+    fi
+
+    local recorded="" f d found=0
+    if [ -d "$HAO_STATE_DIR/services" ]; then
+        recorded="$(cut -f3 "$HAO_STATE_DIR"/services/*.resources 2>/dev/null | sort -u || true)"
+    fi
+    # 前后各补一个换行，下面用 *$'\n'路径$'\n'* 做整行匹配
+    recorded=$'\n'"$recorded"$'\n'
+
+    echo "带 HAO 归属头但没有被 record 记录的文件（只列路径，不打印内容）:"
+    for d in "${dirs[@]}"; do
+        [ -d "$d" ] || continue
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            # 下面两处判断都刻意**不用管道**。`printf … | grep -q` 和
+            # `head … | grep -q` 在 set -o pipefail 下会咬人：grep -q 命中就立刻退出，
+            # 左边还在写就收到 EPIPE，于是整条管道返回 141（非 0）——判断结果被反转。
+            # 而它是否发生取决于左边的数据量有没有一次写完，所以在小样本的测试里
+            # 永远看不到，真机上（记录几十条路径时）才冒出来：本来记录过的文件被
+            # 报成"没记录"。用纯 bash 匹配没有这个问题，也不起子进程。
+            case "$(head -n 12 "$f" 2>/dev/null)" in
+                *"Managed by HAO"*) ;;
+                *) continue ;;
+            esac
+            case "$recorded" in
+                *$'\n'"$f"$'\n'*) continue ;;
+            esac
+            case "$f" in
+                *.bak.*|*.disabled) echo "  $f  （像是备份/停用件，确认线上配置无误后可以删）" ;;
+                *) echo "  $f" ;;
+            esac
+            found=$((found + 1))
+        done < <(grep -rIl 'Managed by HAO' "$d" 2>/dev/null || true)
+    done
+    if [ "$found" -eq 0 ]; then
+        echo "  （无 —— 所有带归属头的文件都在记录里）"
+        return 0
+    fi
+    echo "合计 $found 个。每一个都要么补进对应服务的 record，要么确认可以删掉。"
+    echo "补记的办法：hao-state.sh record <service> <result> OWNERSHIP:PATH ...（记得把该服务原有的资源一起列上，record 是整体替换）"
+    return 0
+}
+
 # ==================== record ====================
 cmd_record() {
     local service="${1:-}" result="${2:-}"
@@ -221,10 +354,8 @@ cmd_record() {
 
     [[ "$service" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
         || die "非法服务 ID（只允许小写字母、数字、连字符）: $service"
-    case "$result" in
-        installed|updated|verified|failed|skipped) ;;
-        *) die "非法 result: $result（可用: installed updated verified failed skipped）" ;;
-    esac
+    hao_result_legal "$result" \
+        || die "非法 result: $result（可用: $HAO_RESULTS）"
 
     init_state
     local state_file="$HAO_STATE_DIR/services/$service.json"
@@ -334,6 +465,7 @@ cmd_ownership() {
 
 cmd_services() {
     local state_file service result recorded width=14
+    local -a illegal=()
     if [ ! -d "$HAO_STATE_DIR/services" ]; then
         echo "未找到 HAO 状态目录: $HAO_STATE_DIR（这台机器还没有被 HAO 管理过）"
         return 0
@@ -351,9 +483,21 @@ cmd_services() {
         service="$(basename "$state_file" .json)"
         result="$(sed -n 's/^[[:space:]]*"result": "\([^"]*\)",*$/\1/p' "$state_file" | head -1)"
         recorded="$(sed -n 's/^[[:space:]]*"recorded_at": "\([^"]*\)",*$/\1/p' "$state_file" | head -1)"
+        # 存量记录可能是更早的版本写的，里面的 result 不一定是现在的合法取值。
+        # record 只能拦新的，落盘的那些不会有人发现 —— 除了在这里点出来。
+        hao_result_legal "$result" || illegal+=("$service=$result")
         printf "%-${width}s %-10s %-10s %s\n" \
             "$service" "$result" "$(cmd_ownership "$service")" "$recorded"
     done
+    if [ "${#illegal[@]}" -gt 0 ]; then
+        echo ""
+        echo "记录异常：下面这些服务的 result 不在合法取值内（$HAO_RESULTS）。"
+        echo "它们多半是更早的版本写下的，读到这种值说明记录不可信，先修正再据它做判断："
+        local item
+        for item in "${illegal[@]}"; do
+            echo "  ${item%%=*}: \"${item#*=}\"  ->  hao-state.sh amend ${item%%=*} --result <合法词>"
+        done
+    fi
 }
 
 cmd_credentials() {
@@ -668,12 +812,19 @@ cmd_convention() {
 }
 
 # ==================== 分派 ====================
+# 头部注释就是用法说明。不写死行号 —— 那个数字每次加一段注释就会过时，
+# 而且过时的方式是静默的（-h 会把脚本正文也打印出来）。
 usage() {
-    sed -n '3,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    awk 'NR <= 2 { next }
+         /^[[:space:]]*$/ { print ""; next }
+         /^#/ { sub(/^# ?/, ""); print; next }
+         { exit }' "${BASH_SOURCE[0]}"
 }
 
 case "${1:-}" in
     record)      shift; cmd_record "$@" ;;
+    amend)       shift; cmd_amend "$@" ;;
+    orphans)     shift; cmd_orphans "$@" ;;
     intent)      shift; cmd_intent "$@" ;;
     drift)       shift; cmd_drift "$@" ;;
     ownership)   shift; cmd_ownership "$@" ;;
@@ -682,5 +833,5 @@ case "${1:-}" in
     handoff)     shift; cmd_handoff "$@" ;;
     convention)  shift; cmd_convention "$@" ;;
     -h|--help|"") usage ;;
-    *) die "未知子命令: $1（可用: record intent drift ownership services credentials handoff convention）" ;;
+    *) die "未知子命令: $1（可用: record amend intent drift orphans ownership services credentials handoff convention）" ;;
 esac
