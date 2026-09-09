@@ -109,6 +109,29 @@ include /etc/nginx/snippets/security-headers*.conf;
   照这份清单原样重跑 `hao-state.sh record site-<ID> updated <每一行>`，
   完整写法见 `references/site.md` 第 6 节。
 
+- **已部署站点的 `:80` server 块必须检查是否有 `acme-challenge.conf` include。**
+  旧版 `scanner-blocks.conf` 用 `(?!well-known/)` 例外放行 ACME 路径；新版依赖
+  vhost 里的 `^~` 前缀 location 抢在正则之前接走——`^~` 命中后 nginx 不再试正则，
+  ACME 路径就不会被 `location ~ /\.` 的 403 拦住。site 模块生成的 vhost 已经有
+  `include /etc/nginx/snippets/acme-challenge.conf;`，但手写的或模块外管理的 vhost
+  可能没有。**漏补的后果是证书续期静默失败**（certbot 能签发，但 80 上的验证请求
+  会 403，而不是 404）——用下面这条验证每个站点：
+
+  ```bash
+  # 期望 404，绝不能是 403
+  curl -s -o /dev/null -w '%{http_code}\n' -H "Host: <DOMAIN>" \
+      http://127.0.0.1/.well-known/acme-challenge/probe
+  ```
+
+  如果返回 403，在该 vhost 的 `:80` server 块里、`scanner-blocks` include **之前**
+  加一行：
+
+  ```nginx
+  include /etc/nginx/snippets/acme-challenge.conf;
+  ```
+
+  然后 `nginx -t && systemctl reload nginx`，重跑 `certbot renew --dry-run --cert-name <域名>` 确认续期可以过。
+
 ## 4. 可选：后台 Basic Auth 网关
 
 给带管理后台的 Node 站点在应用登录之外加一道门：私密路径 + Basic Auth +
