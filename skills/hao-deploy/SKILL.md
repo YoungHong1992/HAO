@@ -57,6 +57,7 @@ curl -s --max-time 5 https://api.ipify.org     # 这台机器的公网 IP
 | 我要一台能跑 AI 工具的机器 | `node` + `uv` + `claude-code` |
 | 我要跑容器化的服务 | `docker`（+ `nginx` 做反代） |
 | 服务器刚买来，先弄安全点 | `fail2ban` + `swap` + `journald` |
+| 我要给站点防扫站/防爆破 | `nginx-hardening` + `fail2ban-nginx`（站点在 CF 后面时连边缘那步一起给用户） |
 | 我要在服务器上用 git / GitHub | `git` + `gh` |
 
 问清缺失的关键信息，一次问完，不要来回挤牙膏。各模块要问什么，看对应的
@@ -104,6 +105,8 @@ reference。**不要替用户猜域名、Git 身份、仓库地址这类东西�
 | `git` | `references/git.md` | Git + 提交身份 |
 | `gh` | `references/gh.md` | GitHub CLI + 授权助手 + gh 操作约定 |
 | `site` | `references/site.md` | 从 Git 仓库部署静态站或 Node 站，含证书 |
+| `nginx-hardening` | `references/nginx-hardening.md` | 站点防护基线：真实 IP 还原、扫站/恶意 UA 拦截、限流、安全响应头 |
+| `fail2ban-nginx` | `references/fail2ban-nginx.md` | 站点扫站（403/404）与后台爆破的自动封禁 |
 
 **一个工具一个模块。** 用户要的往往是好几个（意图表就是干这个的），但每个模块
 自己是独立的：独立安装、独立 `record`、独立 drift、独立卸载。装三件加固时其中

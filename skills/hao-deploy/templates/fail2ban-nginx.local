@@ -1,0 +1,69 @@
+# Managed by HAO
+# Service: fail2ban-nginx
+# 目标路径: /etc/fail2ban/jail.d/hao-nginx.local
+#
+# 占位符：无。
+#
+# backend = auto 必须显式写。Debian/Ubuntu 的 fail2ban 在 defaults-debian.conf
+# 里把 [DEFAULT] backend 设成了 systemd（读 journal），而 nginx 的日志在
+# 文件里 —— 不覆盖的话 jail 装上了也一个 IP 都匹配不到，还不报任何错。
+# （hao-sshd.local 用 systemd 是同一个原因的反向：sshd 只写 journal。）
+#
+# 两个 jail 读的是**不同的日志**，这不是笔误：
+#   scan 读 *access.log —— 403/404 只出现在访问日志里。
+#   auth 读 *error.log  —— Basic Auth 的**真实**失败（密码错、用户不存在）只写
+#     error log。访问日志里的 401 分不出"密码错"和"浏览器还没带凭据时的正常
+#     挑战响应"，而后者每次新开标签/隐身窗口/curl/监控探测都会产生一个：按
+#     访问日志的 401 计数，管理员自己 10 分钟内访问 8 次后台就把自己封了。
+#
+# logpath 用 glob 是刻意的：站点会陆续增加，逐个列文件迟早漂移。glob 在
+# fail2ban 启动/reload 时解析一次，**之后新建的日志文件不会自动跟进** ——
+# 所以每部署一个新站点，要 fail2ban-client reload 一次（references/site.md
+# 第 6 节的收尾会提醒）。
+#
+# **不设 banaction**，和 hao-sshd.local 一样继承 [DEFAULT] 的封禁后端。写死
+# banaction = nftables 有三个代价：统一的 action.d/nftables.conf 要 fail2ban
+# ≥ 0.11（本模块前置检查放行 ≥ 0.10），没装 nft 的机器上 jail 照样加载成功、
+# status 照样绿（封禁动作是首次封人时才惰性执行的），而且会让同一台机器
+# 的 sshd jail 走 iptables、nginx jail 走 nftables。实际用的是哪个后端由
+# references/fail2ban-nginx.md 第 3 节现场验证。
+#
+# 封禁效果的诚实预期（三层各管一段）：
+#   - 直连源站的扫描器：封掉，立竿见影（实测真实存在的攻击：单 IP 一分钟 370 次）。
+#   - 经 Cloudflare 代理的攻击者：真实 IP 不直接连源站，socket 级封禁对这类
+#     流量无效 —— 那部分靠 nginx 按真实 IP 限流压制 + 用户在 CF 边缘配
+#     WAF/质询规则（references/nginx-hardening.md 的附录）。
+
+[hao-nginx-scan]
+enabled  = true
+backend  = auto
+port     = http,https
+filter   = hao-nginx-scan
+# 本机监控/健康检查的 404 不算数，防止自己封自己
+ignoreip = 127.0.0.1/8 ::1
+logpath  = /var/log/nginx/*access.log
+# 60 秒内 15 次 403/404。正常访客点错几个链接远到不了这个量；扫描器动辄
+# 一分钟上百次。filter 不数 429，所以正常访客的首屏并发不会累积到这里 ——
+# 理由写在 filter 模板头部，改阈值前先读那段。
+maxretry = 15
+findtime = 60
+bantime  = 86400
+bantime.increment = true
+bantime.factor = 2
+
+[hao-nginx-auth]
+enabled  = true
+backend  = auto
+port     = http,https
+# 用 fail2ban 自带的 filter（和 sshd jail 用自带 filter = sshd 同一个理由：
+# 上游维护、久经使用）。它只匹配 error log 里的 "password mismatch" 和
+# "was not found in"，天然排除了无凭据的正常挑战。
+filter   = nginx-http-auth
+ignoreip = 127.0.0.1/8 ::1
+logpath  = /var/log/nginx/*error.log
+# 10 分钟内 8 次**真实**认证失败。没装后台 Basic Auth 网关时这个 jail 空转（无害）。
+maxretry = 8
+findtime = 600
+bantime  = 86400
+bantime.increment = true
+bantime.factor = 2
