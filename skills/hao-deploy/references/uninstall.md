@@ -163,15 +163,17 @@ certbot delete --cert-name <域名>     # 确认后再删
 **只在对应服务真的已经删掉之后**再清状态：
 
 ```bash
-rm -f /var/lib/hao/services/<service>.json \
-      /var/lib/hao/services/<service>.resources \
-      /var/lib/hao/services/<service>.intent
+"$SKILL/scripts/hao-state.sh" remove <service>
 "$SKILL/scripts/hao-state.sh" handoff        # 重建 manifest、意图文档与交接文档
 ```
 
-`handoff` 会同时重建 `manifest.json` 和 `DEPLOY-INTENT.md`，所以删完 `services/`
-下的文件必须跑一次,否则清单里会留下一个已经不存在的服务。站点的文件名是
-`site-<id>.*`。
+`remove` 删掉 `services/<service>.json|.resources|.intent` 并重建 `manifest.json`，
+但**先检查该服务的资源是不是还留在主机上**：还在就列出路径并拒绝执行。理由是
+"服务还在、记录先没了"会让下一个 agent 把它当成无主资源，可能拒绝操作或误覆盖。
+确实要放弃归属时（例如服务转交用户自己维护）才显式加 `--force`。
+
+`handoff` 会同时重建 `manifest.json` 和 `DEPLOY-INTENT.md`，所以清完状态必须跑一次，
+否则清单里会留下一个已经不存在的服务。站点的文件名是 `site-<id>.*`。
 
 删意图之前先问一句：**用户是不是还想留着那份重建依据。** 服务删了但意图还有用的
 情况很常见（换机器重建）。真要删就先让他把 `DEPLOY-INTENT.md` 存走。

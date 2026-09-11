@@ -174,12 +174,22 @@ HAO 只装**通用的运维底座**：Web 服务器、运行时、容器引擎�
   并在汇报里单独说这一条。
 - 配置文件或 compose 里要填密码？用 `hao-secret.sh write` 生成、
   `hao-secret.sh render` 注入（模板里写 `@@KEY@@`），别把值读出来拼进去。
+- **它自己有没有记着对外地址？** 公开地址 / 站点 URL、允许来源（Origin / Referer
+  白名单）、CORS、OAuth 回调、Cookie 的 `Secure` 位、CSRF 的信任来源、TrustedHost。
+  这些可能由应用自身配置，换域名或换协议时要按上游文档同步检查；漏改的现象是**首页正常、
+  一登录/一提交就报错**。理由与做法见 `references/site.md` 的「来源校验教训」。
+- **它有哪些启动校验和反代要求？** 按上游文档检查公开 URL、必需密钥、
+  TLS 终止方式、转发头和可信代理配置。应用内部监听 HTTP，也可以由 Nginx 对外
+  提供 HTTPS；应用需要正确识别原始请求的协议与地址。确认配置兼容后再启用跳转，
+  若不兼容，说明限制并让用户决定方案，不自动改为明文部署。
 - 数据在哪（bind mount 还是 named volume）？销毁机器前要导出什么？
 - 镜像 tag 别用 `latest`，让用户去上游 releases 挑一个固定 tag——
   否则同一份步骤两周后装出来的东西不一样。部署前用
   `docker manifest inspect <image>:<tag>` 确认 tag 还在，拉不到就停下来问用户，
   不要默默换一个。
-- 容器端口一律绑 `127.0.0.1`，对外只走 Nginx 反代。
+- 容器端口一律绑 `127.0.0.1`，对外只走 Nginx 反代。宿主机端口用
+  `hao-guard.sh port-free <端口>` 挑（只接受 `free`，`unknown` 表示查不了）；
+  **占端口的常常不是容器而是 systemd 服务**，默认端口撞上它很常见。
 - 服务目录放 `/opt/<服务名>`，和站点源码同一套约定。
 
 反代和证书照 `references/site.md` 第 4 节做（含 certbot 签发；续期钩子由 nginx
@@ -194,6 +204,15 @@ HAO 只装**通用的运维底座**：Web 服务器、运行时、容器引擎�
 - Nginx：`nginx -t` 通过，且 reload 成功
 - 站点：**真的取一次内容**（`curl -sS -o /dev/null -w '%{http_code}' -H "Host: $DOMAIN" http://127.0.0.1/`），
   不是 2xx/3xx 就停下
+- **反代的是应用时，还要验证实际交互流程**：首页 200 不能证明登录或提交可用。
+  对提供 POST 等非 GET 接口的应用，通过公开 URL，按其要求携带 Origin / Referer、
+  Cookie 和 CSRF token 做受控验证；具体步骤见 `references/site.md` 的「来源校验教训」。
+  按预期响应和应用日志判断，不能仅凭没有来源 / CSRF 类 403 就判定通过。
+  无法完成的流程要如实标为未验证
+- 探测结果**隔一两秒复测一次再下结论**：`systemctl reload nginx` 是优雅切换，
+  已有连接上的请求可能仍由旧 worker 按改动前的配置应答。复测时建立新连接，
+  确认响应符合新配置；结果不一致时继续检查 reload 和错误日志，不把固定等待时间
+  当作配置已经生效的保证
 - 调优项：回读实际生效值（例如 BBR 要看 `sysctl -n net.ipv4.tcp_congestion_control`）
 
 失败就停下来如实汇报，把原始输出给用户。

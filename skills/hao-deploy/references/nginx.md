@@ -251,6 +251,33 @@ sysctl -n net.ipv4.tcp_congestion_control
 "$SKILL/scripts/hao-state.sh" handoff
 ```
 
+#### 机器上原来就有 nginx（不是本 skill 装的）
+
+上面那串 `record` 是**HAO 装了 nginx 之后**的形态，别照抄到别人的机器上：把那一串
+都记成 `managed`，等于告诉下一个 agent"apt 源、sysctl、keyring、续期钩子都是 HAO 的"，
+它就会理所当然地去重写它们。
+
+只记**这次真的写了**的文件，其余按其真实归属记：
+
+```bash
+"$SKILL/scripts/hao-state.sh" record nginx installed \
+    managed:/etc/nginx/snippets/ssl-hardening.conf \
+    managed:/etc/nginx/snippets/acme-challenge.conf \
+    managed:/etc/nginx/snippets/redirect-to-https.conf \
+    observed:/etc/nginx/nginx.conf \
+    observed:/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+```
+
+- 主配置是发行版或别人写的 → `observed`（第 1 节判断为"已就绪/foreign 而跳过"时就是
+  这种情况）。
+- 「只改了其中几个键」的文件（`daemon.json`、`.gitconfig`、`/etc/fstab`）→ `shared`，
+  见 `references/docker.md` 的同类说明。
+- 续期钩子：机器上已经有的话记 `observed`，但**要确认它真的能跑**
+  （直接执行 `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh`，退出码 0 才算通）。
+  没有这个钩子，证书续期后 nginx 会继续用旧证书，而这件事要到下次有人看才被发现。
+- `intent` 也别写 `source=nginx.org`：那是假的，会变成一条误导下一台机器的重放依据。
+  整套 nginx 都不是 HAO 装的机器，只为 HAO 写过的那几个片段记 `intent`（或不记）。
+
 `record` 会静默跳过不存在的路径并打印一行"跳过不存在的路径: …"。那行是**证据**：
 钩子或 keyring 出现在里面，说明那一步其实没做成，回去查。
 
