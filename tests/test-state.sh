@@ -368,8 +368,8 @@ else
 fi
 
 # ---------- orphans 默认清单：限深 vs 无限递归 ----------
-# /opt 是唯一可能压着大树的目录（站点源码），实测一台 2 GB 的 /opt 无限递归要 23 秒，
-# 限深 3 只要 0.01 秒。所以默认清单允许写 <目录>:<深度>，而显式传目录一律无限递归。
+# 默认清单允许写 <目录>:<深度>，以控制大目录树的扫描开销。
+# 验证限深扫描的边界，以及不带深度的清单项和显式目录的完整递归行为。
 TREE="$WORK/tree"
 mkdir -p "$TREE/a/b/c"
 printf '# Managed by HAO\n# Service: deepsvc\n' > "$TREE/shallow.conf"

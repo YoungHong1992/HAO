@@ -32,10 +32,9 @@
 #   hao-state.sh convention <MARKER-ID> [--user USER] [--agent-file PATH]...  # 正文从 stdin
 #
 # orphans 的默认扫描清单可用 HAO_ORPHAN_DIRS_DEFAULT 覆盖（空格分隔）。每一项写成
-# <目录> 或 <目录>:<深度> —— 带深度的是**限深**扫描，给 /opt 这种压着站点源码的
-# 大树用：无限递归的代价随目录树大小和缓存状态走（本机实测冷缓存 23 秒、热缓存
-# 0.3 秒），而限深扫描恒定在十几毫秒。
-# 显式传目录（orphans /opt）一律无限递归，用于确认某个位置该不该更宽。
+# <目录> 或 <目录>:<深度> —— 带深度的是限深扫描，用于控制大目录树的扫描开销。
+# 扫描耗时取决于目录规模、存储性能和缓存状态；限深扫描不会覆盖更深的文件。
+# 需要完整排查时显式传目录，例如 orphans /opt。
 #
 # RESULT 取值（只有这五个，amend 用来修正存量记录里的非法值）:
 #   installed 第一次装好
@@ -367,12 +366,9 @@ EOF
 #
 # 只扫 HAO 可能写入的目录，不扫整个文件系统 —— 后者慢，而且会撞上无关的副本。
 HAO_ORPHAN_DIRS_DEFAULT="${HAO_ORPHAN_DIRS_DEFAULT:-/etc/nginx /etc/apt /etc/systemd/system /etc/fail2ban /etc/sysctl.d /etc/security /etc/letsencrypt/renewal-hooks /etc/docker /etc/hao /usr/local/bin /opt:3}"
-# /opt 带 :3 是因为它是唯一可能压着大树的目录：站点源码在 /opt/<站点ID> 下，一个带
-# 依赖的检出就是上万个文件（本机实测 /opt 共 14996 个文件，其中 12660 个在站点目录里）。
-# 无限递归要走完整棵树，代价随目录树与缓存状态走（本机冷缓存 23 秒、热缓存 0.3 秒）；
-# 限深 3 只走 85 个文件、恒定约 0.015 秒 —— 而带归属头的文件（服务目录、compose、
-# *.bak.*）都在前三层。更深的位置用显式目录扫：`orphans /opt`
-# （显式传目录一律无限递归，用于确认某个位置该不该更宽）。
+# /opt 可能包含大量站点源码和依赖，因此默认限深 3，以控制扫描开销。
+# 这能覆盖 /opt/<服务>/<文件> 等浅层路径，但更深的配置或备份不会被扫描。
+# 需要完整排查时显式运行 `orphans /opt`，递归扫描整个目录树。
 
 # 列出一个目录里带归属头的文件。depth 为空 = 无限递归。
 scan_hao_files() {
