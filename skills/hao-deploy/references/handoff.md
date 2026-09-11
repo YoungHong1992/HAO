@@ -249,6 +249,33 @@ cat /var/lib/hao/HANDOFF.md                      # 先读这个
 "HAO 自己写的文件没被人动过"，不等于"这台机器没被人动过"。
 一个 `managed` 资源都没有的服务（例如 `uv`）永远显示正常。
 
+### 接手一台跑过更早版本（CLI 形态）HAO 的机器
+
+更早的版本是一套 CLI（用一个 `hao` 命令跑 plan / apply 这类子命令），它的记录格式
+与主机布局跟现在不同，而它留下的东西**不会自己消失**。其中一类特别隐蔽：
+**旧 service ID 在新版里没有对应模块**——`services` 只会点出非法的 `result`，
+不会告诉你这个 ID 该往哪映射。逐条对一遍：
+
+- 旧的 `git-github` 一条记录把 git 和 gh 合在一起，新版是**两个**独立模块。按
+  `references/git.md` / `references/gh.md` 分别记 `git` 与 `gh`，然后
+  `hao-state.sh remove git-github` 把旧记录清掉——否则 `drift` 会一直报它缺失。
+  合并记录丢掉的正是「单独卸载、单独查漂移」这两件事。
+- 旧版写的主机文件带 `hao-` 前缀和旧 service 名：授权助手在
+  `/usr/local/bin/hao-github-authorize`，新版逐字安装成
+  `/usr/local/bin/github-authorize`、归属头是 `# Service: gh`。改名后**旧文件要删掉**
+  （通用命名是刻意的约定），apt 源那几行的 `# Service:` 也一并改成新 service ID，
+  否则下一个 agent 的归属判断和 `orphans` 对账都会对不上。
+- 旧版把凭据放在服务目录里（例如 compose 目录下的 `hao-credentials.txt`），新版约定是
+  `/etc/hao`。**不要为了迁就约定去搬一个可能正被服务读着的凭据文件**：先确认没有程序
+  按旧路径读它，确认不了就留在原地、按 `secret` 记它的真实路径，并在交接里写明。
+- `/var/lib/hao/NOTICE` 会被下一次 `record` 自动重写成新版文案，不需要手工处理。
+- 旧版在 `/opt` 下留的产物（服务目录、`*.bak.*`）：默认扫描覆盖 `/opt` 的三层深度
+  （`/opt/<服务>/<文件>` 够用）。更深的位置要显式 `hao-state.sh orphans /opt`
+  ——显式传目录是整棵递归，慢。
+
+清理旧记录用 `hao-state.sh remove <service>`：它会先检查该服务的资源是否都还在主机上，
+还在就拒绝删除（除非显式 `--force`），避免"服务还在、记录先没了"。
+
 ## 机器销毁后还剩什么
 
 `/var/lib/hao` 随机器一起消失。真正需要跨机器存活的是**部署意图**，不是状态。
