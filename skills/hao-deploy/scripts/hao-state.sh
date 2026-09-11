@@ -21,6 +21,7 @@
 # 用法:
 #   hao-state.sh record <service> <result> OWNERSHIP:PATH [...]
 #   hao-state.sh amend <service> --result <result>
+#   hao-state.sh remove <service> [--force]
 #   hao-state.sh intent <service> key=value [...]
 #   hao-state.sh drift
 #   hao-state.sh orphans [DIR...]
@@ -29,6 +30,12 @@
 #   hao-state.sh credentials
 #   hao-state.sh handoff [--user USER] [--agent-file PATH]... [--skip-agent-files]
 #   hao-state.sh convention <MARKER-ID> [--user USER] [--agent-file PATH]...  # 正文从 stdin
+#
+# orphans 的默认扫描清单可用 HAO_ORPHAN_DIRS_DEFAULT 覆盖（空格分隔）。每一项写成
+# <目录> 或 <目录>:<深度> —— 带深度的是**限深**扫描，给 /opt 这种压着站点源码的
+# 大树用：无限递归的代价随目录树大小和缓存状态走（本机实测冷缓存 23 秒、热缓存
+# 0.3 秒），而限深扫描恒定在十几毫秒。
+# 显式传目录（orphans /opt）一律无限递归，用于确认某个位置该不该更宽。
 #
 # RESULT 取值（只有这五个，amend 用来修正存量记录里的非法值）:
 #   installed 第一次装好
@@ -284,6 +291,72 @@ cmd_amend() {
     echo "别忘了在收尾时运行: hao-state.sh handoff"
 }
 
+# ==================== remove ====================
+# 删掉一个服务的记录（.json / .resources / .intent）并重建 manifest。
+#
+# 为什么需要它：卸载流程过去是手工 `rm -f /var/lib/hao/services/<svc>.*`，而
+# 「服务还在、记录先没了」的后果很具体 —— 下一个 agent 会把主机上那些文件当成
+# 无主资源，要么拒绝操作、要么在重建时覆盖掉。所以默认先检查记录里的资源是不是
+# 还留在主机上，还在就拒绝删除。
+#
+# 确实要放弃归属时（服务转交用户自己维护、资源已在别处登记）才用 --force。
+# 它只重建 manifest.json；HANDOFF.md 与 DEPLOY-INTENT.md 由 handoff 重建，
+# 所以收尾仍要跑一次 handoff，输出里会提醒。
+cmd_remove() {
+    local service="${1:-}"
+    [ -n "$service" ] || die "remove 需要 <service> [--force]"
+    shift
+    local force=false
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --force) force=true; shift ;;
+            *) die "未知参数: $1（remove 只支持 --force）" ;;
+        esac
+    done
+
+    local state_file="$HAO_STATE_DIR/services/$service.json"
+    local resources_file="$HAO_STATE_DIR/services/$service.resources"
+    local intent_file="$HAO_STATE_DIR/services/$service.intent"
+    [ -f "$state_file" ] || [ -f "$resources_file" ] || [ -f "$intent_file" ] \
+        || die "没有 $service 的记录，无需删除。"
+
+    # 记录里的资源（含 secret 凭据）还留在主机上吗？
+    local ownership hash path
+    local -a still_there=()
+    if [ -f "$resources_file" ]; then
+        while IFS=$'\t' read -r ownership hash path || [ -n "$path" ]; do
+            [ -n "$path" ] || continue
+            if [ -e "$path" ]; then
+                still_there+=("$ownership  $path")
+            fi
+        done < "$resources_file"
+    fi
+
+    if [ "${#still_there[@]}" -gt 0 ] && [ "$force" != true ]; then
+        echo "拒绝删除 $service 的记录：它的资源还在主机上。" >&2
+        printf '  %s\n' "${still_there[@]}" >&2
+        cat >&2 <<'EOF'
+
+先按 references/uninstall.md 把服务真正卸掉（删文件、停服务、删容器），再回来 remove。
+如果这些资源是有意保留的（例如服务已转交用户自己维护），用
+`remove <service> --force` 明确放弃归属 —— 之后它们归用户，不再受 HAO 管。
+
+不加 --force 是为了避免"服务还在、记录先没了"：下一个 agent 会把它们当成无主资源，
+要么拒绝操作，要么在重建时覆盖掉。
+EOF
+        return 1
+    fi
+
+    local msg="已删除服务 $service 的记录"
+    if [ "${#still_there[@]}" -gt 0 ]; then
+        msg="$msg（--force：${#still_there[@]} 个资源仍在主机上，归属已放弃）"
+    fi
+    rm -f "$state_file" "$resources_file" "$intent_file"
+    rebuild_manifest
+    echo "$msg"
+    echo "别忘了在收尾时运行: hao-state.sh handoff（重建 HANDOFF.md 与 DEPLOY-INTENT.md）"
+}
+
 # ==================== orphans ====================
 # 找出「带 HAO 归属头、但不在任何 services/*.resources 里」的文件。
 #
@@ -293,7 +366,23 @@ cmd_amend() {
 # 接手一台别人（或以前的自己）部署过的机器时，这一条比什么都实用。
 #
 # 只扫 HAO 可能写入的目录，不扫整个文件系统 —— 后者慢，而且会撞上无关的副本。
-HAO_ORPHAN_DIRS_DEFAULT="/etc/nginx /etc/apt /etc/systemd/system /etc/fail2ban /etc/sysctl.d /etc/security /etc/letsencrypt/renewal-hooks /etc/docker /etc/hao /usr/local/bin"
+HAO_ORPHAN_DIRS_DEFAULT="${HAO_ORPHAN_DIRS_DEFAULT:-/etc/nginx /etc/apt /etc/systemd/system /etc/fail2ban /etc/sysctl.d /etc/security /etc/letsencrypt/renewal-hooks /etc/docker /etc/hao /usr/local/bin /opt:3}"
+# /opt 带 :3 是因为它是唯一可能压着大树的目录：站点源码在 /opt/<站点ID> 下，一个带
+# 依赖的检出就是上万个文件（本机实测 /opt 共 14996 个文件，其中 12660 个在站点目录里）。
+# 无限递归要走完整棵树，代价随目录树与缓存状态走（本机冷缓存 23 秒、热缓存 0.3 秒）；
+# 限深 3 只走 85 个文件、恒定约 0.015 秒 —— 而带归属头的文件（服务目录、compose、
+# *.bak.*）都在前三层。更深的位置用显式目录扫：`orphans /opt`
+# （显式传目录一律无限递归，用于确认某个位置该不该更宽）。
+
+# 列出一个目录里带归属头的文件。depth 为空 = 无限递归。
+scan_hao_files() {
+    local dir="$1" depth="$2"
+    if [ -n "$depth" ]; then
+        find "$dir" -maxdepth "$depth" -type f -exec grep -Il 'Managed by HAO' {} + 2>/dev/null || true
+    else
+        grep -rIl 'Managed by HAO' "$dir" 2>/dev/null || true
+    fi
+}
 
 cmd_orphans() {
     local -a dirs=()
@@ -304,7 +393,7 @@ cmd_orphans() {
         dirs=($HAO_ORPHAN_DIRS_DEFAULT)
     fi
 
-    local recorded="" f d found=0
+    local recorded="" f d depth entry found=0
     if [ -d "$HAO_STATE_DIR/services" ]; then
         recorded="$(cut -f3 "$HAO_STATE_DIR"/services/*.resources 2>/dev/null | sort -u || true)"
     fi
@@ -312,7 +401,18 @@ cmd_orphans() {
     recorded=$'\n'"$recorded"$'\n'
 
     echo "带 HAO 归属头但没有被 record 记录的文件（只列路径，不打印内容）:"
-    for d in "${dirs[@]}"; do
+    for entry in "${dirs[@]}"; do
+        # <目录> 或 <目录>:<深度>
+        d="${entry%%:*}"
+        depth=""
+        case "$entry" in
+            *:*)
+                depth="${entry##*:}"
+                case "$depth" in
+                    ''|*[!0-9]*) die "非法的扫描深度: $entry（形如 /opt:3）" ;;
+                esac
+                ;;
+        esac
         [ -d "$d" ] || continue
         while IFS= read -r f; do
             [ -n "$f" ] || continue
@@ -334,7 +434,7 @@ cmd_orphans() {
                 *) echo "  $f" ;;
             esac
             found=$((found + 1))
-        done < <(grep -rIl 'Managed by HAO' "$d" 2>/dev/null || true)
+        done < <(scan_hao_files "$d" "$depth")
     done
     if [ "$found" -eq 0 ]; then
         echo "  （无 —— 所有带归属头的文件都在记录里）"
@@ -824,6 +924,7 @@ usage() {
 case "${1:-}" in
     record)      shift; cmd_record "$@" ;;
     amend)       shift; cmd_amend "$@" ;;
+    remove)      shift; cmd_remove "$@" ;;
     orphans)     shift; cmd_orphans "$@" ;;
     intent)      shift; cmd_intent "$@" ;;
     drift)       shift; cmd_drift "$@" ;;
@@ -833,5 +934,5 @@ case "${1:-}" in
     handoff)     shift; cmd_handoff "$@" ;;
     convention)  shift; cmd_convention "$@" ;;
     -h|--help|"") usage ;;
-    *) die "未知子命令: $1（可用: record amend intent drift orphans ownership services credentials handoff convention）" ;;
+    *) die "未知子命令: $1（可用: record amend remove intent drift orphans ownership services credentials handoff convention）" ;;
 esac

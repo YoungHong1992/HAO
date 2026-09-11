@@ -367,5 +367,76 @@ else
     bad "orphans 把 $many_false 个已记录的文件误报成 orphan（EPIPE 回归）"
 fi
 
+# ---------- orphans 默认清单：限深 vs 无限递归 ----------
+# /opt 是唯一可能压着大树的目录（站点源码），实测一台 2 GB 的 /opt 无限递归要 23 秒，
+# 限深 3 只要 0.01 秒。所以默认清单允许写 <目录>:<深度>，而显式传目录一律无限递归。
+TREE="$WORK/tree"
+mkdir -p "$TREE/a/b/c"
+printf '# Managed by HAO\n# Service: deepsvc\n' > "$TREE/shallow.conf"
+printf '# Managed by HAO\n# Service: deepsvc\n' > "$TREE/a/b/c/deep.conf"
+
+deep_out="$(HAO_ORPHAN_DIRS_DEFAULT="$TREE:2" "$STATE" orphans)"
+case "$deep_out" in
+    *"$TREE/shallow.conf"*) note "限深清单扫到了浅层文件" ;;
+    *) bad "限深清单漏了浅层文件" ;;
+esac
+case "$deep_out" in
+    *"$TREE/a/b/c/deep.conf"*) bad "限深清单扫到了深度之外的文件" ;;
+    *) note "限深清单遵守深度上限" ;;
+esac
+
+wide_out="$(HAO_ORPHAN_DIRS_DEFAULT="$TREE" "$STATE" orphans)"
+case "$wide_out" in
+    *"$TREE/a/b/c/deep.conf"*) note "不带深度的清单项无限递归" ;;
+    *) bad "不带深度的清单项没有递归到底" ;;
+esac
+
+explicit_out="$("$STATE" orphans "$TREE")"
+case "$explicit_out" in
+    *"$TREE/a/b/c/deep.conf"*) note "显式传目录时无限递归" ;;
+    *) bad "显式传目录未递归到底" ;;
+esac
+
+if HAO_ORPHAN_DIRS_DEFAULT="$TREE:abc" "$STATE" orphans >/dev/null 2>&1; then
+    bad "未拒绝非法的扫描深度"
+else
+    note "拒绝非法的扫描深度"
+fi
+
+# ---------- remove：删记录前先确认资源真的没了 ----------
+# 卸载流程过去是手工 `rm -f services/<svc>.*`。而"服务还在、记录先没了"会让下一个
+# agent 把主机上那些文件当成无主资源，要么拒绝操作、要么在重建时覆盖掉。
+echo "still here" > "$WORK/res/rm-live.conf"
+"$STATE" record rmsvc installed "managed:$WORK/res/rm-live.conf" >/dev/null
+if "$STATE" remove rmsvc >/dev/null 2>&1; then
+    bad "remove 在资源仍在主机上时没有拒绝"
+else
+    note "remove 拒绝删除资源仍在主机上的记录"
+fi
+[ -f "$HAO_STATE_DIR/services/rmsvc.json" ] \
+    && note "被拒绝时记录未被删除" || bad "被拒绝时记录已丢失"
+
+"$STATE" remove rmsvc --force >/dev/null \
+    && note "remove --force 可显式放弃归属" || bad "remove --force 失败"
+[ ! -f "$HAO_STATE_DIR/services/rmsvc.json" ] \
+    && note "remove 删掉了记录文件" || bad "remove 未删掉记录文件"
+grep -q '"service": "rmsvc"' "$HAO_STATE_DIR/manifest.json" \
+    && bad "remove 未重建 manifest（幻影服务还在清单里）" || note "remove 重建了 manifest"
+
+echo "gone soon" > "$WORK/res/rm-gone.conf"
+"$STATE" record rmsvc2 installed "managed:$WORK/res/rm-gone.conf" >/dev/null
+"$STATE" intent rmsvc2 type=static >/dev/null
+rm -f "$WORK/res/rm-gone.conf"
+"$STATE" remove rmsvc2 >/dev/null && note "资源已删时 remove 正常执行" || bad "remove 执行失败"
+[ ! -f "$HAO_STATE_DIR/services/rmsvc2.json" ] && [ ! -f "$HAO_STATE_DIR/services/rmsvc2.resources" ] \
+    && [ ! -f "$HAO_STATE_DIR/services/rmsvc2.intent" ] \
+    && note "remove 连 .resources 与 .intent 一起删" || bad "remove 漏了记录文件"
+
+if "$STATE" remove nosuchsvc >/dev/null 2>&1; then
+    bad "remove 未拒绝不存在的服务"
+else
+    note "remove 拒绝不存在的服务"
+fi
+
 [ "$fail" -eq 0 ] || { echo "hao-state 测试失败" >&2; exit 1; }
 echo "hao-state 测试通过"

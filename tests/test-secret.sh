@@ -110,6 +110,44 @@ else
     note "拒绝不存在的 @file 路径"
 fi
 
+# ---------- @hex 来源 ----------
+# 上游文档普遍按 `openssl rand -hex 32` 提要求（即 64 位十六进制）。用字母数字密码
+# 去填会被应用的字符集/长度校验拒掉，而那种报错只说"密钥格式不对"，所以我们单独
+# 有一个十六进制生成器。
+"$SECRET" write "$WORK/hex.env" TOTP_KEY=@hex:64 SIGN_KEY=@hex:8 DEFAULT_HEX=@hex >/dev/null
+hex64="$(sed -n 's/^TOTP_KEY=//p' "$WORK/hex.env")"
+hex8="$(sed -n 's/^SIGN_KEY=//p' "$WORK/hex.env")"
+hexdef="$(sed -n 's/^DEFAULT_HEX=//p' "$WORK/hex.env")"
+printf '%s' "$hex64" | grep -qE '^[0-9a-f]{64}$' \
+    && note "@hex:64 生成 64 位十六进制" || bad "@hex:64 生成的值不对（${#hex64} 位）"
+printf '%s' "$hex8" | grep -qE '^[0-9a-f]{8}$' \
+    && note "@hex:8 尊重请求长度" || bad "@hex:8 生成的值不对（${#hex8} 位）"
+printf '%s' "$hexdef" | grep -qE '^[0-9a-f]{64}$' \
+    && note "@hex 默认 64 位（等价 openssl rand -hex 32）" || bad "@hex 默认长度不对（${#hexdef} 位）"
+
+hex_before="$(sha256sum "$WORK/hex.env" | awk '{print $1}')"
+"$SECRET" write "$WORK/hex.env" TOTP_KEY=@hex:64 SIGN_KEY=@hex:8 DEFAULT_HEX=@hex >/dev/null
+[ "$(sha256sum "$WORK/hex.env" | awk '{print $1}')" = "$hex_before" ] \
+    && note "@hex 重跑复用已有密钥（幂等）" || bad "@hex 重跑改写了已有密钥"
+
+# 非法长度必须拒绝。空长度不算非法 —— 与 @password / @session 一致，取默认值。
+for badlen in abc 0 -1 99999; do
+    if "$SECRET" write "$WORK/hexbad.env" X="@hex:$badlen" >/dev/null 2>&1; then
+        bad "@hex 未拒绝非法长度: $badlen"
+    else
+        note "@hex 拒绝非法长度: $badlen"
+    fi
+done
+"$SECRET" write "$WORK/hexempty.env" X=@hex: >/dev/null 2>&1 \
+    && note "@hex: 空长度按默认处理（与 @password 一致）" \
+    || bad "@hex: 空长度不应被拒绝"
+[ ! -f "$WORK/hexbad.env" ] && note "@hex 被拒绝时未产出文件" || bad "@hex 被拒绝仍写出了文件"
+
+# 值不得出现在 stdout（与其它来源同一条安全属性）
+hex_out="$("$SECRET" write "$WORK/hex.env" TOTP_KEY=@hex:64 2>&1)"
+printf '%s' "$hex_out" | grep -qF "$hex64" \
+    && bad "@hex 的 stdout 泄漏了密钥值" || note "@hex 的 stdout 不含密钥值"
+
 # ---------- render ----------
 cat > "$WORK/tmpl.yml" <<'EOF'
 dsn: "postgresql://root:@@DB_PASSWORD@@@postgres:5432/db"

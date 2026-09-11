@@ -25,6 +25,7 @@
 #   KEY=@password[:LEN]     生成 LEN 位字母数字密码（默认 32）
 #   KEY=@session[:LEN]      生成 LEN 位会话密钥（默认 48）
 #   KEY=@apikey[:PREFIX]    生成 API key（默认前缀 sk-）
+#   KEY=@hex[:N]            生成 N 位十六进制密钥（默认 64，等价 openssl rand -hex 32）
 #   KEY=@file:PATH          从文件首行读取（用户自带的密钥走这条）
 #   KEY=@env:VARNAME        从环境变量读取
 #
@@ -49,6 +50,24 @@ hao_random_alnum() {
         [ -n "$chunk" ] || die "安全随机数生成失败（openssl 是否已安装？）"
         value="${value}${chunk}"
     done
+    printf '%s' "${value:0:length}"
+}
+
+# 十六进制密钥。存在这条是因为上游文档普遍按 `openssl rand -hex 32` 提要求
+# （也就是 64 位十六进制）：用字母数字密码去填，会被应用的字符集或长度校验拒掉，
+# 而那种报错通常只说"密钥格式不对"，不告诉你它要的是十六进制。
+hao_random_hex() {
+    local length="$1" bytes value=""
+    case "$length" in
+        ''|*[!0-9]*) die "@hex 的长度必须是正整数（例如 @hex:64）" ;;
+    esac
+    if [ "$length" -lt 1 ] || [ "$length" -gt 4096 ]; then
+        die "@hex 的长度要在 1..4096 之间（收到 $length）"
+    fi
+    # 十六进制一位 = 半个字节，多取半个字节再截断
+    bytes=$(( (length + 1) / 2 ))
+    value="$(openssl rand -hex "$bytes" 2>/dev/null)" || value=""
+    [ -n "$value" ] || die "安全随机数生成失败（openssl 是否已安装？）"
     printf '%s' "${value:0:length}"
 }
 
@@ -117,6 +136,7 @@ write_file_0600() {
             *)
                 if [ -n "$mode" ] && [ "$((0${mode} & 077))" -ne 0 ]; then
                     echo "hao-secret: 提示 —— 凭据目录 $dir 权限为 $mode，可被同机其他用户列出（文件内容仍受 0600 保护）。建议: chmod 0700 $dir" >&2
+                    echo "hao-secret: 注意 —— 若该目录下还有被容器挂载的子目录（compose 的 postgres_data / redis_data 之类），就不要收紧到 0700：容器里的非 root 进程会因此进不去，服务起不来。那种情况只保证文件是 0600，并在交接里说明为什么不收紧。" >&2
                 fi
                 ;;
         esac
@@ -215,6 +235,9 @@ cmd_write() {
             apikey)
                 value="${param:-sk-}$(hao_random_alnum 45)"
                 ;;
+            hex)
+                value="$(hao_random_hex "${param:-64}")"
+                ;;
             file)
                 src_file="$param"
                 [ -n "$src_file" ] || die "$key=@file: 缺少路径"
@@ -229,7 +252,7 @@ cmd_write() {
                 value="${!src_var}"
                 ;;
             *)
-                die "未知的密钥来源 @$kind（可用: password session apikey file env）"
+                die "未知的密钥来源 @$kind（可用: password session apikey hex file env）"
                 ;;
         esac
 
