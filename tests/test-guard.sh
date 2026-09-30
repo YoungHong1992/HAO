@@ -124,6 +124,17 @@ ExecStart=/usr/bin/node server.js 8137
 EOF
 check "unit-port 读回端口" "8137" "$("$GUARD" unit-port "$WORK/unit.service")"
 check "unit-port 单元不存在" "" "$("$GUARD" unit-port "$WORK/nounit.service")"
+# 裸单元名按 systemd 目录解析（HAO_UNIT_DIR 可覆盖，便于测试）。真实事故：
+# 传了裸名 → 静默返回空 → 调用方以为没有单元、分配了新端口，而服务一直
+# 跑在原端口上。裸名解析不到必须报错，绝不能给空输出。
+check "unit-port 裸名按 HAO_UNIT_DIR 解析" "8137" \
+    "$(HAO_UNIT_DIR="$WORK" "$GUARD" unit-port unit.service)"
+if HAO_UNIT_DIR="$WORK" "$GUARD" unit-port no-such-unit.service >/dev/null 2>&1; then
+    echo "FAIL unit-port 裸名解析不到时应报错而非空输出" >&2
+    fail=1
+else
+    echo "ok   unit-port 裸名解析不到时报错"
+fi
 
 # ---------- unit-free ----------
 # 站点单元用通用命名 <id>.service，于是 /etc/systemd/system/<name>.service 会
