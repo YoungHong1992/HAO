@@ -12,10 +12,14 @@
 #     绝大多数 Node 应用都有依赖，留空会让服务在依赖变更后起不来。
 #   - 值里若含单引号，必须写成 '\'' 转义形式。
 #
-# 占位符（**六个全都要替换**；写入后必须 `grep -n '@@[A-Z]' <目标文件>` 确认为空）:
+# 占位符（**七个全都要替换**；写入后必须 `grep -n '@@[A-Z]' <目标文件>` 确认为空）:
 #   @@SITE_ID@@ @@BRANCH@@ @@TARGET_USER@@ @@TARGET_HOME@@ @@BUILD_CMD@@ @@PORT@@
-# 都在下面的变量赋值里。@@PORT@@ 要和既有单元一致（用 hao-guard.sh unit-port
-# 读回来，别换端口）；@@TARGET_USER@@ 不是 $USER —— 那个变量在 root shell 里
+#   @@UNIT_NAME@@
+# 都在下面的变量赋值里。@@PORT@@ 和 @@UNIT_NAME@@ 都要和既有单元一致：新部署
+# 时单元名就是 <站点ID>.service；接手已有站点时单元名可能是别的（真实案例：
+# 站点 wangdahe-toolbox 的单元叫 hongge-tools.service），从现有单元读回原名再填，
+# 别让脚本 restart 一个不存在的单元；端口用 hao-guard.sh unit-port 读回来，
+# 别换端口。@@TARGET_USER@@ 不是 $USER —— 那个变量在 root shell 里
 # 恒为 root（见 references/site.md 第 0 节）。
 #
 # 每个值都必须是**单行**：占位符本身也写在上面这些注释里，而替换是整个文件范围的，
@@ -28,7 +32,7 @@ BRANCH='@@BRANCH@@'
 TARGET_USER='@@TARGET_USER@@'
 TARGET_HOME='@@TARGET_HOME@@'
 BUILD_CMD='@@BUILD_CMD@@'
-UNIT_NAME='@@SITE_ID@@.service'
+UNIT_NAME='@@UNIT_NAME@@'
 PORT='@@PORT@@'
 
 log() { printf '[%s-update] %s\n' "$SITE_ID" "$*"; }

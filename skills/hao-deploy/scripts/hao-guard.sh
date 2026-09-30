@@ -16,7 +16,7 @@
 #   hao-guard.sh repo-identity <dir> <expected_remote>
 #   hao-guard.sh port-free [--tcp|--udp] <port>
 #   hao-guard.sh unit-free <unit_name>
-#   hao-guard.sh unit-port <unit_file>
+#   hao-guard.sh unit-port <unit_file|unit_name>
 #   hao-guard.sh os-supported
 
 set -euo pipefail
@@ -263,8 +263,17 @@ cmd_unit_free() {
 # ==================== unit-port ====================
 # 输出端口号，或在读不到时输出空行。
 cmd_unit_port() {
-    local unit="${1:-}"
+    local unit="${1:-}" unit_dir="${HAO_UNIT_DIR:-/etc/systemd/system}"
     [ -n "$unit" ] || die "unit-port 需要 <unit_file>"
+    # 裸单元名（不含 /）按 systemd 目录解析。真实事故：调用方传了裸名，
+    # [ -f ] 判空 → 返回空 → 被当成「还没有单元」去分配新端口，而服务一直
+    # 在别的端口上跑。裸名解析不到就报错；完整路径维持旧语义（文件不存在 →
+    # 空输出），site.md 第 3b 节端口分配的幂等性依赖它。
+    case "$unit" in
+        */*) ;;
+        *) unit="$unit_dir/$unit"
+           [ -f "$unit" ] || die "unit-port: 裸名 $1 在 $unit_dir/ 下不存在；要「文件不存在 = 空输出」的新部署语义请传完整路径" ;;
+    esac
     [ -f "$unit" ] || { echo ""; return 0; }
     sed -n 's|^ExecStart=.*[[:space:]]\([0-9]\{1,5\}\)[[:space:]]*$|\1|p' "$unit" | head -1
 }
