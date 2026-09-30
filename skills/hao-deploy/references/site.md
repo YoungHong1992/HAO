@@ -53,7 +53,7 @@ snippet 必须用同一个值。
 | 域名走不走 CDN | 走了就再问一句「CDN 到源站是 HTTP 还是 HTTPS」（Cloudflare 叫 SSL/TLS 模式） | 回源走 HTTP 时源站开跳转 = 无限重定向，站点完全打不开，见第 4 节 |
 | 证书联系邮箱 | 有域名时问一句，可以不给（那就明确地不注册联系方式）。**不要从域名拼一个** | 拼出来的地址多半不存在，多级后缀还会算成别人的域名，见第 4 节 |
 | 分支 | 默认 `main` | 拉错分支等于发错版本 |
-| 构建命令 | **两种类型都要问**。先看仓库用哪个包管理器（第 3a 节有判据表，`pnpm-lock.yaml` 的仓库用 `npm ci` 是装不对的）。static 如 `pnpm install --frozen-lockfile && pnpm run build`；node 至少要装依赖，如 `npm ci --omit=dev` | node 站点漏了它服务根本起不来（缺 node_modules）；包管理器用错则依赖树不对或被 `preinstall` 钩子拦住；static 留空则直接发布仓库内容 |
+| 构建命令 | **两种类型都要问**。先看仓库用哪个包管理器（第 3a 节有判据表，`pnpm-lock.yaml` 的仓库用 `npm ci` 是装不对的）。static 如 `pnpm install --frozen-lockfile && pnpm run build`；node 至少要装依赖，如 `npm ci --omit=dev`。接手已有部署时，把候选命令先以目标用户跑一遍——时区、环境变量这类主机差异会在这里暴露（真实案例：仓库的测试假定 UTC 时区，主机是 Asia/Shanghai，得用 `TZ=UTC npm test` 才能全过） | node 站点漏了它服务根本起不来（缺 node_modules）；包管理器用错则依赖树不对或被 `preinstall` 钩子拦住；static 留空则直接发布仓库内容 |
 | 产物目录 | static 用，默认 `build`；无构建命令时默认 `.` | 填错发布出空站点 |
 | 入口文件 | node 用，默认 `server.js` | 服务起不来 |
 | 运行用户 | 默认 `$SUDO_USER`，否则 root | 决定文件归属 |
@@ -190,6 +190,19 @@ runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" git -C "$DIR" reset --hard 
 ```
 
 克隆失败要把半成品目录删掉再报错，不要留下空目录（下次重跑会被误判为已存在）。
+
+**接手一个已存在的 clone（repo-identity == ok）时，reset --hard 之前先看工作区脏不脏**：
+
+```bash
+runuser -u "$TARGET_USER" -- env HOME="$TARGET_HOME" git -C "$DIR" status --porcelain
+```
+
+有输出就停下来弄清那些改动是什么，不要直接 reset 抹掉。真实案例：站点的
+`llms.txt` / `sitemap.xml` 在部署时按**本站域名**重新生成过（仓库里提交的是另一个
+域名的版本），没有提交——直接 reset 的话，之后每次更新都会把线上 SEO 文件的域名
+抹回仓库默认值。这类部署态产物的正确解法是把重生成命令连同它需要的环境变量并入
+BUILD_CMD（如 `SITE_URL=https://<域名> node scripts/gen-seo.js`），让每次更新自动
+重生成，而不是留一份一 reset 就丢的手工改动。若是人为手改，回去问用户，不要覆盖。
 
 **仓库地址可能内嵌凭据**（`https://user:token@github.com/...`）。在对话、日志、
 报错里一律用脱敏形式：`sed -E 's#(://)[^/@]+@#\1***@#'`。
@@ -452,7 +465,7 @@ TLS、访问控制、限流全都被跳过，此时唯一挡着的是云安全�
 | `site-body-node.conf` | `SITE_ID` `CONF_NAME` `PORT` |
 | `site-node.service` | `SITE_ID` `TARGET_USER` `TARGET_HOME` `NODE_BIN` `START_FILE` `PORT` `EXTRA_ENV` |
 | `site-update-static.sh.tmpl` | `SITE_ID` `BRANCH` `TARGET_USER` `TARGET_GROUP` `TARGET_HOME` `BUILD_CMD` `OUTPUT_DIR` `DOCROOT` |
-| `site-update-node.sh.tmpl` | `SITE_ID` `BRANCH` `TARGET_USER` `TARGET_HOME` `BUILD_CMD` `PORT` |
+| `site-update-node.sh.tmpl` | `SITE_ID` `BRANCH` `TARGET_USER` `TARGET_HOME` `BUILD_CMD` `PORT` `UNIT_NAME` |
 
 本文里的变量名和 token 名不完全同名，对应关系：
 `$ID`→`@@SITE_ID@@`、`$ENTRY`→`@@START_FILE@@`、`$OUTPUT`→`@@OUTPUT_DIR@@`、
